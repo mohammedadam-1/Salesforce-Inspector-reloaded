@@ -127,6 +127,7 @@ class App extends React.PureComponent {
       fieldCreatorHref: "field-creator.html?" + hostArg,
       limitsHref: "limits.html?" + hostArg,
       apiStatisticsHref: "api-statistics.html?" + hostArg,
+      userInsightAiHref: "user-insight-ai.html?" + hostArg,
       latestNotesViewed:
         localStorage.getItem("latestReleaseNotesVersionViewed")
           === this.props.addonVersion || browser.extension.inIncognitoContext,
@@ -273,6 +274,7 @@ class App extends React.PureComponent {
       h: ["click", "homeBtn"],
       p: ["click", "optionsBtn"],
       m: ["click", "eventMonitorBtn"],
+      y: ["click", "userInsightAiBtn"],
       v: ["click", "logsViewerBtn"],
       b: ["click", "apiStatisticsBtn"],
       c: ["click", "dependenciesExplorerBtn"],
@@ -384,6 +386,7 @@ class App extends React.PureComponent {
       fieldCreatorHref,
       limitsHref,
       apiStatisticsHref,
+      userInsightAiHref,
       isFieldsPresent,
       latestNotesViewed,
       useLegacyDownloadMetadata,
@@ -658,6 +661,23 @@ class App extends React.PureComponent {
                   className: "page-button slds-button slds-button_neutral",
                 },
                 h("span", {}, "Event ", h("u", {}, "M"), "onitor")
+              )
+            ),
+            h(
+              "div",
+              {
+                className:
+                "slds-col slds-size_1-of-1 slds-p-horizontal_xx-small slds-m-bottom_xx-small",
+              },
+              h(
+                "a",
+                {
+                  ref: "userInsightAiBtn",
+                  href: userInsightAiHref,
+                  target: linkTarget,
+                  className: "page-button slds-button slds-button_neutral",
+                },
+                h("span", {}, "User Insight AI")
               )
             )
           ),
@@ -3352,6 +3372,14 @@ class UserDetails extends React.PureComponent {
     );
   }
 
+  getUserInsightAiLink(userId) {
+    let {sfHost} = this.props;
+    let args = new URLSearchParams();
+    args.set("host", sfHost);
+    args.set("userId", userId);
+    return "user-insight-ai.html?" + args;
+  }
+
   enableDebugMode(user) {
     const currentDebugMode = this.state[`userDebugMode_${user.Id}`] !== undefined
       ? this.state[`userDebugMode_${user.Id}`]
@@ -3696,6 +3724,16 @@ class UserDetails extends React.PureComponent {
             title: "Show / assign user's permission set groups",
           },
           "PSetG"
+        ),
+        h(
+          "a",
+          {
+            href: this.getUserInsightAiLink(user.Id),
+            target: "_blank",
+            className: "slds-button slds-button_neutral",
+            title: "Open User Insight AI for this user",
+          },
+          "AI"
         ),
         isOptionEnabled("reset-password", hideButtonsOption) && user.Id !== currentUserId
           ? h(

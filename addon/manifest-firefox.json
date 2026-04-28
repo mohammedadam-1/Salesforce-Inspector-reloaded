@@ -26,6 +26,7 @@
     "https://*.visualforce.mil/*",
     "https://*.crmforce.mil/*",
     "https://*.force.com.mcas.ms/*",
+    "https://api.groq.com/*",
     "cookies",
     "storage",
     "unlimitedStorage"
@@ -83,7 +84,8 @@
     "field-creator.html",
     "options.html",
     "event-monitor.html",
-    "flow-scanner.html"
+    "flow-scanner.html",
+    "user-insight-ai.html"
   ],
   "incognito": "spanning",
   "manifest_version": 2

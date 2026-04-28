@@ -162,6 +162,18 @@ class OptionsTabSelector extends React.Component {
         ]
       },
       {
+        id: "ai",
+        tabTitle: "AI",
+        title: "User Insight AI",
+        description: "Configure Groq Cloud for safe SOQL plans and summaries on the User Insight AI page.",
+        content: [
+          {option: Option, props: {type: "text", title: "Groq API Key", key: Constants.USER_INSIGHT_AI_API_KEY, placeholder: "gsk_...", inputSize: "6", tooltip: "Stored locally in this browser. Used only by User Insight AI background calls."}},
+          {option: Option, props: {type: "text", title: "Groq Responses Endpoint", key: Constants.USER_INSIGHT_AI_ENDPOINT, default: "https://api.groq.com/openai/v1/responses", inputSize: "6", tooltip: "Default Groq OpenAI-compatible Responses API endpoint."}},
+          {option: Option, props: {type: "text", title: "Groq Model", key: Constants.USER_INSIGHT_AI_MODEL, default: "openai/gpt-oss-120b", inputSize: "3", tooltip: "Groq model used for query planning and summarization."}},
+          {option: Option, props: {type: "number", title: "Max insight queries", key: Constants.USER_INSIGHT_AI_MAX_QUERIES, default: 8, min: 1, inputSize: "1", tooltip: "Upper bound for AI-generated SOQL queries to avoid excessive API usage."}},
+        ]
+      },
+      {
         id: "cache",
         tabTitle: "Cache",
         content: [

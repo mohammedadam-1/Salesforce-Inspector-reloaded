@@ -28,7 +28,8 @@
     "https://*.visualforce.mil/*",
     "https://*.crmforce.mil/*",
     "https://*.force.com.mcas.ms/*",
-    "https://*.builder.salesforce-experience.com/*"
+    "https://*.builder.salesforce-experience.com/*",
+    "https://api.groq.com/*"
   ],
   "content_scripts": [
     {
@@ -87,7 +88,8 @@
         "options.html",
         "event-monitor.html",
         "flow-scanner.html",
-        "debug-log.html"
+        "debug-log.html",
+        "user-insight-ai.html"
       ],
       "matches": [
         "https://*.salesforce.com/*",
@@ -166,6 +168,9 @@
     },
     "event-monitor": {
       "description": "Event Monitor"
+    },
+    "user-insight-ai": {
+      "description": "User Insight AI"
     },
     "flow-scanner": {
       "description": "Flow Scanner"

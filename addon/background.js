@@ -1,6 +1,121 @@
 
 let sfHost;
 
+function cookiesGet(details) {
+  return new Promise(resolve => chrome.cookies.get(details, resolve));
+}
+
+async function resolveSessionCookie(sfHost, sender) {
+  if (!sfHost) {
+    throw new Error("Salesforce host is required.");
+  }
+  const storeId = sender?.tab?.cookieStoreId;
+  const details = {url: "https://" + sfHost, name: "sid"};
+  if (storeId) {
+    details.storeId = storeId;
+  }
+  return cookiesGet(details);
+}
+
+async function parseResponseBody(response) {
+  const contentType = response.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    return response.json();
+  }
+  return response.text();
+}
+
+function extractErrorMessage(data, fallbackMessage) {
+  if (!data) {
+    return fallbackMessage;
+  }
+  if (typeof data === "string") {
+    return data || fallbackMessage;
+  }
+  if (data.error?.message) {
+    return data.error.message;
+  }
+  if (data.error_description) {
+    return data.error_description;
+  }
+  if (Array.isArray(data) && data.length > 0) {
+    return data.map(entry => entry.message || entry.errorCode).filter(Boolean).join(", ") || fallbackMessage;
+  }
+  return fallbackMessage;
+}
+
+async function performSalesforceRestRequest(request, sender) {
+  const sessionCookie = request.sessionId
+    ? {value: request.sessionId}
+    : await resolveSessionCookie(request.sfHost, sender);
+
+  if (!sessionCookie?.value) {
+    throw new Error("Salesforce session not found.");
+  }
+
+  const url = new URL(request.path, "https://" + request.sfHost);
+  const headers = {
+    Accept: request.accept || "application/json",
+    Authorization: "Bearer " + sessionCookie.value,
+    ...(request.headers || {})
+  };
+  let body = request.body;
+  if (body !== undefined && body !== null && request.method !== "GET" && request.method !== "HEAD") {
+    if (request.bodyType === "raw") {
+      body = request.body;
+    } else {
+      headers["Content-Type"] = headers["Content-Type"] || "application/json";
+      body = JSON.stringify(request.body);
+    }
+  } else {
+    body = undefined;
+  }
+
+  const response = await fetch(url.toString(), {
+    method: request.method || "GET",
+    headers,
+    body
+  });
+  const data = await parseResponseBody(response);
+
+  if (!response.ok) {
+    throw new Error(extractErrorMessage(data, `Salesforce request failed (${response.status})`));
+  }
+
+  return {
+    success: true,
+    status: response.status,
+    data
+  };
+}
+
+async function performAiRequest(request) {
+  if (!request.apiKey) {
+    throw new Error("Groq API key is not configured.");
+  }
+
+  const response = await fetch(request.endpoint || "https://api.groq.com/openai/v1/responses", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: "Bearer " + request.apiKey
+    },
+    body: JSON.stringify(request.payload || {})
+  });
+
+  const data = await parseResponseBody(response);
+
+  if (!response.ok) {
+    throw new Error(extractErrorMessage(data, `AI request failed (${response.status})`));
+  }
+
+  return {
+    success: true,
+    status: response.status,
+    data
+  };
+}
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   // Perform cookie operations in the background page, because not all foreground pages have access to the cookie API.
   // Firefox does not support incognito split mode, so we use sender.tab.cookieStoreId to select the right cookie store.
@@ -33,6 +148,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       });
     });
     return true; // Tell Chrome that we want to call sendResponse asynchronously.
+  }
+  if (request.message == "salesforceRestRequest") {
+    performSalesforceRestRequest(request, sender)
+      .then(sendResponse)
+      .catch(error => sendResponse({success: false, error: error.message}));
+    return true;
+  }
+  if (request.message == "userInsightAiRequest") {
+    performAiRequest(request)
+      .then(sendResponse)
+      .catch(error => sendResponse({success: false, error: error.message}));
+    return true;
   }
   if (request.message == "getSession") {
     sfHost = request.sfHost;

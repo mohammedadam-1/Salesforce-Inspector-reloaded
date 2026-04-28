@@ -16,6 +16,11 @@ export class Constants {
   static ACCESS_TOKEN = "_access_token";
   static CODE_VERIFIER = "_code_verifier";
   static CLIENT_ID = "_clientId";
+  // User Insight AI
+  static USER_INSIGHT_AI_API_KEY = "userInsightAiApiKey";
+  static USER_INSIGHT_AI_MODEL = "userInsightAiModel";
+  static USER_INSIGHT_AI_ENDPOINT = "userInsightAiEndpoint";
+  static USER_INSIGHT_AI_MAX_QUERIES = "userInsightAiMaxQueries";
   // API Statistics
   static API_DEBUG_STATISTICS_MODE = "apiDebugStatisticsMode";
   static API_DEBUG_STATISTICS = "apiDebugStatistics";
