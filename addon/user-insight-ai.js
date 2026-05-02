@@ -161,11 +161,44 @@ class Model {
   }
 
   createDeterministicSummary(sections) {
-    const totals = Object.entries(sections || {}).map(([section, groups]) => {
-      const count = groups.reduce((sum, group) => sum + (group.totalSize || 0), 0);
-      return `${section}: ${count}`;
+    const user = this.selectedUser;
+    if (!user || !sections) {
+      return `User data retrieved for ${user?.Name || "user"}.`;
+    }
+
+    // Collect record counts by object type
+    const recordsByType = {};
+    Object.entries(sections || {}).forEach(([sectionKey, groups]) => {
+      groups.forEach(group => {
+        const objectName = group.objectLabel || group.objectApiName || "Record";
+        if (!recordsByType[objectName]) {
+          recordsByType[objectName] = 0;
+        }
+        recordsByType[objectName] += group.totalSize || 0;
+      });
     });
-    return `Returned records for ${this.selectedUser.Name}: ${totals.join(", ")}.`;
+
+    // Format the summary narrative
+    const userRole = user.UserRole?.Name ? `in role ${user.UserRole.Name}` : "without a role";
+    const profileName = user.Profile?.Name || "Unknown Profile";
+    const activeStatus = user.IsActive ? "active" : "inactive";
+    const lastLogin = user.LastLoginDate ? new Date(user.LastLoginDate).toLocaleDateString() : "never";
+
+    const recordList = Object.entries(recordsByType)
+      .filter(([, count]) => count > 0)
+      .map(([name, count]) => `${count} ${name}${count !== 1 ? "s" : ""}`)
+      .join(", ");
+
+    const summary = recordList
+      ? `${user.Name}, a ${profileName}, is ${activeStatus} and last logged in on ${lastLogin}. This user has references across ${recordList}.`
+      : `${user.Name}, a ${profileName}, is ${activeStatus}. No owned or created records found.`;
+
+    // Generate highlights from the data
+    this.highlights = Object.entries(recordsByType)
+      .filter(([, count]) => count > 0)
+      .map(([name, count]) => `${count} ${name}${count !== 1 ? "s" : ""} owned/created`);
+
+    return summary;
   }
 
   getOptionsLink() {

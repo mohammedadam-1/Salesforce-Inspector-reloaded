@@ -97,18 +97,46 @@ function extractOutputText(response) {
 }
 
 function parseJsonOutput(response, fallbackMessage) {
-  const text = extractOutputText(response).trim();
+  let text = extractOutputText(response).trim();
   if (!text) {
     throw new Error(fallbackMessage);
   }
+
+  // Strip markdown code fences that some models wrap around JSON output
+  // e.g. ```json { ... } ``` or ``` { ... } ```
+  text = text.replace(/^```(?:json|JSON)?\s*/i, "").replace(/\s*```$/i, "").trim();
+
   try {
     return JSON.parse(text);
   } catch {
-    const match = text.match(/\{[\s\S]*\}/);
-    if (match) {
-      return JSON.parse(match[0]);
+    // Extraction attempt: find the first { and then match it with the last }
+    // This handles cases where the model adds text before/after the JSON
+    const openIdx = text.indexOf("{");
+    const closeIdx = text.lastIndexOf("}");
+
+    if (openIdx !== -1 && closeIdx !== -1 && closeIdx > openIdx) {
+      const jsonCandidate = text.substring(openIdx, closeIdx + 1);
+      try {
+        return JSON.parse(jsonCandidate);
+      } catch {
+        // Continue to the final error throw
+      }
     }
-    throw new Error(fallbackMessage + " The model did not return valid JSON.");
+
+    // Last resort: try to find a valid JSON array if object extraction failed
+    if (text.includes("[")) {
+      const arrayStart = text.indexOf("[");
+      const arrayEnd = text.lastIndexOf("]");
+      if (arrayStart !== -1 && arrayEnd !== -1 && arrayEnd > arrayStart) {
+        try {
+          return JSON.parse(text.substring(arrayStart, arrayEnd + 1));
+        } catch {
+          // Continue to the final error throw
+        }
+      }
+    }
+
+    throw new Error(fallbackMessage + " (The model did not return valid JSON. Response: " + text.substring(0, 200) + ")");
   }
 }
 
@@ -214,6 +242,10 @@ export class UserInsightAiService {
       model: this.settings.model,
       messages: [
         {
+          role: "system",
+          content: "You are a JSON-only API. Respond with a single valid JSON object. No markdown, no code fences, no explanation — raw JSON only."
+        },
+        {
           role: "user",
           content: prompt
         }
@@ -233,6 +265,10 @@ export class UserInsightAiService {
     const response = await sendAiRequest(this.settings, {
       model: this.settings.model,
       messages: [
+        {
+          role: "system",
+          content: "You are a JSON-only API. Respond with a single valid JSON object. No markdown, no code fences, no explanation — raw JSON only."
+        },
         {
           role: "user",
           content: prompt
