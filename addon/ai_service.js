@@ -1,7 +1,7 @@
 import {Constants} from "./utils.js";
 
-const DEFAULT_GROQ_ENDPOINT = "https://api.groq.com/openai/v1/responses";
-const DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b";
+const DEFAULT_GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
+const DEFAULT_GROQ_MODEL = "mixtral-8x7b-32768";
 const DEFAULT_MAX_QUERIES = 8;
 
 function readNumberSetting(key, defaultValue, min, max) {
@@ -22,12 +22,38 @@ function getAiSettings() {
 }
 
 function sendAiRequest(settings, payload) {
+  // Ensure compatibility with both Groq /responses (input) and /chat/completions (messages)
   return new Promise((resolve, reject) => {
+    let payloadToSend = payload;
+    try {
+      const endpoint = (settings.endpoint || "").toLowerCase();
+      // If endpoint appears to be the older /responses style, convert messages -> input
+      if (endpoint.includes("/responses")) {
+        // Build a simple input string from the messages array if provided
+        if (Array.isArray(payload.messages)) {
+          const combined = payload.messages.map(m => (m.content || m.text || "")).filter(Boolean).join("\n\n");
+          payloadToSend = {...payload};
+          payloadToSend.input = combined || payloadToSend.input || "";
+          delete payloadToSend.messages;
+        }
+        // Convert OpenAI-style `max_tokens` to Groq `/responses` `max_output_tokens` when present
+        if (payloadToSend && typeof payloadToSend.max_tokens !== "undefined") {
+          // eslint-disable-next-line camelcase
+          payloadToSend.max_output_tokens = payloadToSend.max_tokens;
+          delete payloadToSend.max_tokens;
+        }
+        // Some /responses endpoints expect `model` and `input` at top-level — keep those fields
+      }
+    } catch {
+      // If transformation fails, fall back to original payload
+      payloadToSend = payload;
+    }
+
     chrome.runtime.sendMessage({
       message: "userInsightAiRequest",
       apiKey: settings.apiKey,
       endpoint: settings.endpoint,
-      payload
+      payload: payloadToSend
     }, response => {
       if (!response) {
         reject(new Error("AI request returned no response."));
@@ -44,6 +70,17 @@ function extractOutputText(response) {
   if (!response) {
     return "";
   }
+  // Handle Groq OpenAI-compatible API format: choices[0].message.content
+  if (Array.isArray(response.choices) && response.choices.length > 0) {
+    const choice = response.choices[0];
+    if (choice.message?.content) {
+      return choice.message.content;
+    }
+    if (choice.text) {
+      return choice.text;
+    }
+  }
+  // Legacy formats
   if (typeof response.output_text === "string") {
     return response.output_text;
   }
@@ -175,38 +212,15 @@ export class UserInsightAiService {
     });
     const response = await sendAiRequest(this.settings, {
       model: this.settings.model,
-      input: prompt,
-      text: {
-        format: {
-          type: "json_schema",
-          name: "user_insight_query_plan",
-          strict: true,
-          schema: {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              queries: {
-                type: "array",
-                maxItems: this.settings.maxQueries,
-                items: {
-                  type: "object",
-                  additionalProperties: false,
-                  properties: {
-                    section: {type: "string", enum: ["owned", "created", "activity"]},
-                    objectApiName: {type: "string"},
-                    filterField: {type: "string"},
-                    title: {type: "string"},
-                    soql: {type: "string"},
-                    rationale: {type: "string"}
-                  },
-                  required: ["section", "objectApiName", "filterField", "title", "soql", "rationale"]
-                }
-              }
-            },
-            required: ["queries"]
-          }
+      messages: [
+        {
+          role: "user",
+          content: prompt
         }
-      }
+      ],
+      temperature: 0,
+      // eslint-disable-next-line camelcase
+      max_tokens: 4096
     });
     return parseJsonOutput(response, "Unable to parse AI-generated SOQL plan.");
   }
@@ -218,27 +232,15 @@ export class UserInsightAiService {
     const prompt = buildSummaryPrompt({user, sections});
     const response = await sendAiRequest(this.settings, {
       model: this.settings.model,
-      input: prompt,
-      text: {
-        format: {
-          type: "json_schema",
-          name: "user_insight_summary",
-          strict: true,
-          schema: {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              summary: {type: "string"},
-              highlights: {
-                type: "array",
-                maxItems: 6,
-                items: {type: "string"}
-              }
-            },
-            required: ["summary", "highlights"]
-          }
+      messages: [
+        {
+          role: "user",
+          content: prompt
         }
-      }
+      ],
+      temperature: 0,
+      // eslint-disable-next-line camelcase
+      max_tokens: 2048
     });
     return parseJsonOutput(response, "Unable to parse AI-generated summary.");
   }

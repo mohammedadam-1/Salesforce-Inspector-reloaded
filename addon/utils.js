@@ -736,22 +736,29 @@ export class DataCache {
    * @private
    */
   static async _getCachedDataLarge(storageKey, cacheKey) {
-    if (typeof browser === "undefined" || !browser.storage || !browser.storage.local) {
-      console.warn("browser.storage.local not available");
+    // Use chrome.storage if browser.storage is not available (Chrome vs Firefox)
+    const storageApi = (typeof browser !== "undefined" && browser.storage?.local)
+      ? browser.storage.local
+      : (typeof chrome !== "undefined" && chrome.storage?.local)
+        ? chrome.storage.local
+        : null;
+
+    if (!storageApi) {
+      console.warn("No storage API available");
       return null;
     }
 
     try {
-      const result = await browser.storage.local.get(storageKey);
+      const result = await storageApi.get(storageKey);
       const cached = result[storageKey];
 
       if (!cached) {
         return null;
       }
 
-      //check it the cache is valid
+      //check if the cache is valid
       if (!this.isCacheValid(cached, cacheKey)) {
-        await browser.storage.local.remove(storageKey);
+        await storageApi.remove(storageKey);
         return null;
       }
 
@@ -924,13 +931,20 @@ export class DataCache {
    * @private
    */
   static async _setCachedDataLarge(storageKey, cacheKey, cacheEntry) {
-    if (typeof browser === "undefined" || !browser.storage || !browser.storage.local) {
-      console.warn("browser.storage.local not available");
+    // Use chrome.storage if browser.storage is not available (Chrome vs Firefox)
+    const storageApi = (typeof browser !== "undefined" && browser.storage?.local)
+      ? browser.storage.local
+      : (typeof chrome !== "undefined" && chrome.storage?.local)
+        ? chrome.storage.local
+        : null;
+
+    if (!storageApi) {
+      console.warn("No storage API available");
       return false;
     }
 
     try {
-      await browser.storage.local.set({[storageKey]: cacheEntry});
+      await storageApi.set({[storageKey]: cacheEntry});
       return true;
     } catch (e) {
       console.error(`Error storing large data cache for ${cacheKey}:`, e);
@@ -1367,3 +1381,4 @@ export function formatDuration(minutes) {
 
   return parts.length > 0 ? parts.join(" ") : "Less than a minute";
 }
+

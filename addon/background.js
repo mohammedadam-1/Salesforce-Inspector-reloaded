@@ -188,6 +188,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 chrome.action.onClicked.addListener(() => {
   chrome.runtime.sendMessage({
     msg: "shortcut_pressed", sfHost, command: "open-popup"
+  }).catch(() => {
+    // No listener open yet — this is expected if popup isn't active
   });
 });
 chrome.commands?.onCommand.addListener((command) => {
@@ -211,6 +213,8 @@ chrome.commands?.onCommand.addListener((command) => {
   } else if (command.startsWith("open-")){
     chrome.runtime.sendMessage({
       msg: "shortcut_pressed", command, sfHost
+    }).catch(() => {
+    // No listener — expected
     });
   } else {
     chrome.tabs.create({
