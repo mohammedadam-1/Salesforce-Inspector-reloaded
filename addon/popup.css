@@ -482,12 +482,15 @@ a.icon-url {
   position: fixed !important;
   z-index: var(--sfir-z-tabs) !important;
   width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
 }
 
 #mainTabs .slds-tabs_scoped__link {
   line-height: 2rem !important;
   padding-block: 0;
-  padding-inline: 0.75rem;
+  padding-inline: 0.4rem;
   height: auto;
   border-bottom: none !important;
   font-weight: 600;
@@ -593,4 +596,70 @@ a.icon-url {
 /* Prevent link hover decoration when hovering copy icon */
 a:hover:has(.sfir-copy-userid-icon:hover) {
   text-decoration: none;
+}
+
+/* Schema Explorer Styles */
+.schema-explorer-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.schema-explorer-search {
+  flex-shrink: 0;
+}
+
+.schema-explorer-input {
+  width: 100%;
+  padding: var(--sfir-spacing-md) !important;
+  font-size: var(--sfir-font-md) !important;
+  border: 1px solid var(--sfir-border-color) !important;
+  border-radius: var(--sfir-radius-md) !important;
+}
+
+.schema-explorer-input:focus {
+  outline: none;
+  border-color: var(--sfir-focus-color) !important;
+  box-shadow: 0 0 0 2px rgba(21, 137, 238, 0.25) !important;
+}
+
+.schema-explorer-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.schema-explorer-item {
+  padding: var(--sfir-spacing-md);
+  border-bottom: 1px solid var(--sfir-border-color);
+  cursor: pointer;
+  transition: background-color 0.15s linear;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sfir-spacing-xs);
+}
+
+.schema-explorer-item:hover {
+  background-color: var(--sfir-light-gray);
+}
+
+.schema-explorer-item--selected {
+  background-color: #e3f2fd;
+  border-left: 3px solid var(--sfir-focus-color);
+  padding-left: calc(var(--sfir-spacing-md) - 3px);
+}
+
+.schema-explorer-item-label {
+  font-weight: 600;
+  color: var(--sfir-text-primary);
+  font-size: var(--sfir-font-lg);
+}
+
+.schema-explorer-item-api {
+  font-size: var(--sfir-font-xs);
+  color: var(--sfir-text-secondary);
+  font-family: monospace;
 }

@@ -3,6 +3,7 @@ import {sfConn, apiVersion, sessionError} from "./inspector.js";
 import {getLinkTarget, isOptionEnabled, isSettingEnabled, getLatestApiVersionFromOrg, setOrgInfo, getPKCEParameters, getBrowserType, getExtensionId, getClientId, getRedirectUri, Constants, copyToClipboard, DataCache, getFlowCompareUrl, isRecordId, getSobjectsList} from "./utils.js";
 import {setupLinks} from "./links.js";
 import AlertBanner from "./components/AlertBanner.js";
+import AllDataBoxSchemaExplorer from "./schema-explorer.js";
 
 let p = parent;
 let hideButtonsOption = JSON.parse(localStorage.getItem("hideButtonsOption"));
@@ -960,6 +961,7 @@ class AllDataBox extends React.PureComponent {
       users: "users",
       shortcuts: "shortcuts",
       org: "org",
+      schema: "schema",
     };
     const defaultPopupTab = localStorage.getItem("defaultPopupTab");
     const defaultTab = defaultPopupTab
@@ -1256,6 +1258,23 @@ class AllDataBox extends React.PureComponent {
             h("u", {}, "r"),
             "g"
           )
+        ),
+        h(
+          "li",
+          {
+            ref: "schemaTab",
+            onClick: this.onAspectClick,
+            "data-aspect": this.SearchAspectTypes.schema,
+            className:
+              activeSearchAspect == this.SearchAspectTypes.schema
+                ? "slds-tabs_scoped__item slds-is-active"
+                : "slds-tabs_scoped__item",
+          },
+          h(
+            "span",
+            {className: "slds-tabs_scoped__link"},
+            "Schema Explorer"
+          )
         )
       ),
       activeSearchAspect == this.SearchAspectTypes.sobject
@@ -1324,7 +1343,17 @@ class AllDataBox extends React.PureComponent {
                 },
                 "Users"
               )
-              : "AllData aspect " + activeSearchAspect + " not implemented"
+              : activeSearchAspect == this.SearchAspectTypes.schema
+                ? h(
+                  AllDataBoxSchemaExplorer,
+                  {
+                    ref: "showAllDataBoxSchemaExplorer",
+                    sfHost,
+                    linkTarget,
+                    contextPath,
+                  }
+                )
+                : "AllData aspect " + activeSearchAspect + " not implemented"
     );
   }
 }

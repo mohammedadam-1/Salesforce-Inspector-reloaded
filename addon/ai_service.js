@@ -107,6 +107,7 @@ function parseJsonOutput(response, fallbackMessage) {
   text = text.replace(/^```(?:json|JSON)?\s*/i, "").replace(/\s*```$/i, "").trim();
 
   try {
+
     return JSON.parse(text);
   } catch {
     // Extraction attempt: find the first { and then match it with the last }
