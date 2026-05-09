@@ -129,7 +129,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     // http://salesforce.stackexchange.com/questions/23277/different-session-ids-in-different-contexts
     // There is no straight forward way to unambiguously understand if the user authenticated against salesforce.com or cloudforce.com
     // (and thereby the domain of the relevant cookie) cookie domains are therefore tried in sequence.
-    chrome.cookies.get({url: request.url, name: "sid", storeId: sender.tab.cookieStoreId}, cookie => {
+    chrome.cookies.get({url: request.url, name: "sid", storeId: sender?.tab?.cookieStoreId}, cookie => {
       if (!cookie || currentDomain.endsWith(".mcas.ms")) { //Domain used by Microsoft Defender for Cloud Apps, where sid exists but cannot be read
         sendResponse(currentDomain);
         return;
@@ -163,7 +163,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
   if (request.message == "getSession") {
     sfHost = request.sfHost;
-    chrome.cookies.get({url: "https://" + request.sfHost, name: "sid", storeId: sender.tab.cookieStoreId}, sessionCookie => {
+    chrome.cookies.get({url: "https://" + request.sfHost, name: "sid", storeId: sender?.tab?.cookieStoreId}, sessionCookie => {
       if (!sessionCookie) {
         sendResponse(null);
         return;
