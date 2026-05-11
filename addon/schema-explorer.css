@@ -65,12 +65,18 @@
 
 .schema-explorer-input {
   width: 100%;
-  padding: 10px 12px;
-  font-size: 13px;
+  min-height: 34px;
+  height: 34px;
+  padding: 0 12px !important;
+  font-size: 13px !important;
+  line-height: 32px;
   border: 1px solid #ccc;
   border-radius: 4px;
   outline: none;
   transition: border-color 0.2s ease;
+  background-color: #fff;
+  color: #16325c;
+  box-sizing: border-box;
 }
 
 .schema-explorer-input:focus {
@@ -185,6 +191,18 @@
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
 }
 
+.schema-explorer-field-item--drilldown:focus {
+  background-color: #e3f0fa;
+  border-color: #066afe;
+  box-shadow: 0 0 0 2px rgba(6, 106, 254, 0.15);
+  outline: none;
+}
+
+.schema-explorer-field-item--expanded {
+  background-color: #e3f0fa;
+  border-color: #066afe;
+}
+
 .schema-explorer-field-item--selected {
   background-color: #066afe;
   border-color: #066afe;
@@ -233,9 +251,63 @@
   color: white;
 }
 
+.schema-explorer-field-objects-panel {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #bee5eb;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.schema-explorer-field-objects-heading {
+  color: #2c3e50;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.schema-explorer-field-objects-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.schema-explorer-field-object-row {
+  background: #fff;
+  border: 1px solid #dee2e6;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+}
+
+.schema-explorer-field-object-row:hover,
+.schema-explorer-field-object-row:focus {
+  border-color: #066afe;
+  box-shadow: 0 0 0 2px rgba(6, 106, 254, 0.12);
+  outline: none;
+}
+
+.schema-explorer-field-object-name {
+  color: #0c5460;
+  font-family: monospace;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.schema-explorer-field-object-label {
+  color: #666;
+  font-size: 10px;
+}
+
 /* ===== FIELD DETAILS PANEL ===== */
 .schema-explorer-field-details {
   flex: 1;
+  min-width: 0;
   border: 1px solid #dee2e6;
   border-radius: 4px;
   background-color: #fff;
@@ -347,6 +419,19 @@
   border: 1px solid #bee5eb;
   border-radius: 4px;
   font-size: 12px;
+}
+
+.schema-explorer-object-badge--clickable {
+  cursor: pointer;
+  transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.schema-explorer-object-badge--clickable:hover,
+.schema-explorer-object-badge--clickable:focus {
+  background-color: #d7ebfb;
+  border-color: #066afe;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(6, 106, 254, 0.15);
 }
 
 .schema-explorer-object-name {

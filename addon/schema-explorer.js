@@ -1,8 +1,9 @@
 /* global React */
-import {sfConn, apiVersion} from "./inspector.js";
-import {DataCache} from "./utils.js";
+/* eslint-disable react/prop-types */
+import { sfConn, apiVersion } from "./inspector.js";
+import { DataCache } from "./utils.js";
 
-const SCHEMA_CACHE_KEY = "SCHEMA_OBJECTS_LIST";
+const SCHEMA_CACHE_KEY = "SCHEMA_OBJECTS_LIST_V2";
 
 class AllDataBoxSchemaExplorer extends React.PureComponent {
   constructor(props) {
@@ -13,9 +14,8 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
       filteredObjects: [],
       fieldResults: [],
       selectedIndex: -1,
-      selectedFieldKey: null,
       selectedField: null,
-      fieldDependencies: {dependsOn: [], referencedBy: []},
+      fieldDependencies: { dependsOn: [], referencedBy: [] },
       isLoading: false,
       isLoadingFields: false,
       isLoadingDependencies: false,
@@ -37,7 +37,7 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
   }
 
   loadSchemaObjects() {
-    this.setState({isLoading: true, error: null});
+    this.setState({ isLoading: true, error: null });
 
     this.getSchemaObjects(this.props.sfHost)
       .then((objects) => {
@@ -87,12 +87,14 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
             apiName: sobject.name,
             label: sobject.label || sobject.name,
             type: "Standard",
+            durableId: sobject.name,
+            isCustomSetting: false,
           });
         }
       }
 
       try {
-        const entityQuery = `SELECT QualifiedApiName, Label FROM EntityDefinition ORDER BY Label LIMIT 2000`;
+        const entityQuery = "SELECT QualifiedApiName, Label, DurableId, IsCustomSetting FROM EntityDefinition ORDER BY Label LIMIT 2000";
         const entityResult = await sfConn.rest(
           "/services/data/v" + apiVersion + "/tooling/query?q=" + encodeURIComponent(entityQuery)
         );
@@ -103,11 +105,15 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
             const label = record.Label || apiName;
             if (objectsMap.has(apiName)) {
               objectsMap.get(apiName).label = label;
+              objectsMap.get(apiName).durableId = record.DurableId || apiName;
+              objectsMap.get(apiName).isCustomSetting = Boolean(record.IsCustomSetting);
             } else {
               objectsMap.set(apiName, {
                 apiName,
                 label,
                 type: "Custom",
+                durableId: record.DurableId || apiName,
+                isCustomSetting: Boolean(record.IsCustomSetting),
               });
             }
           }
@@ -135,9 +141,8 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
       {
         searchText,
         selectedIndex: -1,
-        selectedFieldKey: null,
         selectedField: null,
-        fieldDependencies: {dependsOn: [], referencedBy: []},
+        fieldDependencies: { dependsOn: [], referencedBy: [] },
       },
       () => {
         this.filterObjects(searchText);
@@ -147,7 +152,7 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
   };
 
   switchView = (view) => {
-    this.setState({activeView: view});
+    this.setState({ activeView: view });
   };
 
   filterObjects(searchText) {
@@ -155,14 +160,14 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
     const lowerSearch = searchText.toLowerCase();
 
     if (!lowerSearch) {
-      this.setState({filteredObjects: objects});
+      this.setState({ filteredObjects: objects });
       return;
     }
 
     const filtered = objects.filter(
       (obj) =>
-        obj.label.toLowerCase().includes(lowerSearch) ||
-        obj.apiName.toLowerCase().includes(lowerSearch)
+        obj.label.toLowerCase().includes(lowerSearch)
+        || obj.apiName.toLowerCase().includes(lowerSearch)
     );
 
     filtered.sort((a, b) => {
@@ -184,7 +189,7 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
       return aLabel.localeCompare(bLabel);
     });
 
-    this.setState({filteredObjects: filtered});
+    this.setState({ filteredObjects: filtered });
   }
 
   getObjectMatches(searchText) {
@@ -197,8 +202,8 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
 
     return objects.filter(
       (obj) =>
-        obj.label.toLowerCase().includes(lowerSearch) ||
-        obj.apiName.toLowerCase().includes(lowerSearch)
+        obj.label.toLowerCase().includes(lowerSearch)
+        || obj.apiName.toLowerCase().includes(lowerSearch)
     );
   }
 
@@ -210,11 +215,11 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
     this.fieldSearchTimer = setTimeout(async () => {
       const normalized = String(searchText || "").trim();
       if (normalized.length < 2) {
-        this.setState({fieldResults: [], isLoadingFields: false, fieldSearchError: null});
+        this.setState({ fieldResults: [], isLoadingFields: false, fieldSearchError: null });
         return;
       }
 
-      this.setState({isLoadingFields: true, fieldSearchError: null});
+      this.setState({ isLoadingFields: true, fieldSearchError: null });
 
       try {
         const results = await this.fetchFieldResultsFromAPI(normalized);
@@ -232,87 +237,87 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
         }));
       } catch (err) {
         console.error("Error fetching field search results:", err);
-        this.setState({fieldResults: [], isLoadingFields: false, fieldSearchError: err.message || "Field search failed"});
+        this.setState({ fieldResults: [], isLoadingFields: false, fieldSearchError: err.message || "Field search failed" });
       }
     }, 300);
   }
 
-  async fetchFieldResultsFromAPI(searchText) {
-    const escapedSearch = searchText.replace(/([\\%_'])/g, "\\$1");
-    
-    // We must query FieldDefinition to get standard fields.
-    // However, FieldDefinition requires filtering by EntityDefinitionId.
-    // So we chunk all known objects and query them concurrently.
-    const allObjects = Array.isArray(this.state.objects) ? this.state.objects.map(o => o.apiName) : [];
-    if (allObjects.length === 0) return [];
+  escapeSoqlLike(value) {
+    return String(value || "").replace(/([\\%_'])/g, "\\$1");
+  }
 
-    // Filter out some notoriously problematic system objects that cause query errors
-    const safeObjects = allObjects.filter(apiName => !apiName.endsWith('ChangeEvent') && !apiName.endsWith('Share') && !apiName.endsWith('History'));
+  escapeSoqlString(value) {
+    return String(value || "").replace(/([\\'])/g, "\\$1");
+  }
 
-    const chunks = [];
-    for (let i = 0; i < safeObjects.length; i += 100) {
-      chunks.push(safeObjects.slice(i, i + 100));
+  async queryFieldDefinitions(query, source) {
+    try {
+      const result = await sfConn.rest("/services/data/v" + apiVersion + "/tooling/query?q=" + encodeURIComponent(query));
+      return { source, records: Array.isArray(result?.records) ? result.records : [] };
+    } catch (e) {
+      console.warn("Field chunk query failed", e);
+      return { source, records: [] };
     }
+  }
 
-    const promises = chunks.map(chunk => {
-      // Disjunctions (OR) are not supported on FieldDefinition. We strictly search by Label as requested.
-      const query = `SELECT DurableId, QualifiedApiName, Label, DataType, EntityDefinition.QualifiedApiName, EntityDefinition.MasterLabel FROM FieldDefinition WHERE Label LIKE '%${escapedSearch}%' AND EntityDefinition.QualifiedApiName IN ('${chunk.join("','")}') LIMIT 200`;
-      return sfConn.rest("/services/data/v" + apiVersion + "/tooling/query?q=" + encodeURIComponent(query)).catch(e => {
-        console.warn("Field chunk query failed", e);
-        return { records: [] };
+  addFieldRecordToGroups(groups, record) {
+    const label = record.Label || record.QualifiedApiName || "";
+    if (!label) return null;
+
+    const apiName = record.QualifiedApiName;
+    const objectName = record.EntityDefinition?.QualifiedApiName || "Unknown";
+    const objectLabel = record.EntityDefinition?.MasterLabel || objectName;
+    const durableId = record.DurableId || null;
+    const entityDurableId = record.EntityDefinition?.DurableId || objectName;
+    const isCustomSetting = Boolean(record.EntityDefinition?.IsCustomSetting);
+
+    // Group by Label instead of API Name, as requested.
+    const groupKey = label.toLowerCase();
+
+    if (!groups.has(groupKey)) {
+      groups.set(groupKey, {
+        key: groupKey,
+        apiName, // store the first API name found as a reference
+        label,
+        dataType: record.DataType || "Field",
+        objects: new Map(),
+        records: [],
       });
-    });
-
-    const results = await Promise.all(promises);
-    const groups = new Map();
-
-    for (const result of results) {
-      if (!result || !Array.isArray(result.records)) continue;
-
-      for (const record of result.records) {
-        const label = record.Label || record.QualifiedApiName || "";
-        if (!label) continue;
-        
-        const apiName = record.QualifiedApiName;
-        const objectName = record.EntityDefinition?.QualifiedApiName || "Unknown";
-        const objectLabel = record.EntityDefinition?.MasterLabel || objectName;
-        const durableId = record.DurableId || null;
-        
-        // Group by Label instead of API Name, as requested
-        const groupKey = label.toLowerCase();
-
-        if (!groups.has(groupKey)) {
-          groups.set(groupKey, {
-            key: groupKey,
-            apiName: apiName, // store the first API name found as a reference
-            label: label,
-            dataType: record.DataType || "Field",
-            objects: new Map(),
-            records: [],
-          });
-        }
-
-        const group = groups.get(groupKey);
-        group.records.push({
-          durableId,
-          apiName,
-          label,
-          objectName,
-          objectLabel,
-          dataType: record.DataType,
-        });
-        
-        if (!group.objects.has(objectName)) {
-          group.objects.set(objectName, {apiName: objectName, label: objectLabel});
-        }
-      }
     }
 
+    const group = groups.get(groupKey);
+    const groupRecord = {
+      durableId,
+      entityDurableId,
+      apiName,
+      label,
+      objectName,
+      objectLabel,
+      dataType: record.DataType,
+      isCustomSetting,
+    };
+
+    const recordKey = `${objectName}.${apiName}.${durableId || ""}`;
+    const recordExists = group.records.some(existing =>
+      `${existing.objectName}.${existing.apiName}.${existing.durableId || ""}` === recordKey
+    );
+    if (!recordExists) {
+      group.records.push(groupRecord);
+    }
+
+    if (!group.objects.has(objectName)) {
+      group.objects.set(objectName, { apiName: objectName, label: objectLabel, record: groupRecord });
+    }
+
+    return label;
+  }
+
+  buildFieldGroups(groups) {
     const groupsArray = Array.from(groups.values()).map((group) => ({
       ...group,
       objects: Array.from(group.objects.values()),
       objectCount: group.objects.size,
-      apiNames: Array.from(new Set(group.records.map(r => r.apiName))),
+      apiNames: Array.from(new Set(group.records.map(r => r.apiName).filter(Boolean))),
       // Pass all records so we can resolve their IDs later
       records: group.records,
     }));
@@ -321,35 +326,116 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
     return groupsArray;
   }
 
+  fetchFieldsByExactLabels(labels, objectChunks, fieldSelect) {
+    const promises = labels.flatMap(label =>
+      objectChunks.map(chunk => {
+        const objectFilter = `EntityDefinition.QualifiedApiName IN ('${chunk.join("','")}')`;
+        const labelFilter = `Label = '${this.escapeSoqlString(label)}'`;
+        const query = `${fieldSelect} WHERE ${labelFilter} AND ${objectFilter} LIMIT 2000`;
+        return this.queryFieldDefinitions(query, "labelExpansion");
+      })
+    );
+
+    return Promise.all(promises);
+  }
+
+  async fetchFieldResultsFromAPI(searchText) {
+    const escapedSearch = this.escapeSoqlLike(searchText);
+
+    // We must query FieldDefinition to get standard fields.
+    // However, FieldDefinition requires filtering by EntityDefinitionId.
+    // So we chunk all known objects and query them concurrently.
+    const allObjects = Array.isArray(this.state.objects) ? this.state.objects.map(o => o.apiName) : [];
+    if (allObjects.length === 0) return [];
+
+    // Filter out some notoriously problematic system objects that cause query errors
+    const safeObjects = allObjects.filter(apiName => !apiName.endsWith("ChangeEvent") && !apiName.endsWith("Share") && !apiName.endsWith("History"));
+
+    const chunks = [];
+    for (let i = 0; i < safeObjects.length; i += 100) {
+      chunks.push(safeObjects.slice(i, i + 100));
+    }
+
+    const fieldSelect
+      = "SELECT DurableId, QualifiedApiName, Label, DataType, "
+      + "EntityDefinition.QualifiedApiName, EntityDefinition.MasterLabel, "
+      + "EntityDefinition.DurableId, EntityDefinition.IsCustomSetting FROM FieldDefinition";
+
+    const searchQueries = chunks.flatMap(chunk => {
+      const objectFilter = `EntityDefinition.QualifiedApiName IN ('${chunk.join("','")}')`;
+      const labelQuery = `${fieldSelect} WHERE Label LIKE '%${escapedSearch}%' AND ${objectFilter} LIMIT 200`;
+      const apiNameQuery = `${fieldSelect} WHERE QualifiedApiName LIKE '%${escapedSearch}%' AND ${objectFilter} LIMIT 200`;
+
+      return [
+        { query: labelQuery, source: "label" },
+        { query: apiNameQuery, source: "apiName" },
+      ];
+    });
+
+    const results = await Promise.all(
+      searchQueries.map(({ query, source }) => this.queryFieldDefinitions(query, source))
+    );
+    const groups = new Map();
+    const apiMatchLabels = new Set();
+
+    for (const result of results) {
+      if (!result || !Array.isArray(result.records)) continue;
+
+      for (const record of result.records) {
+        const label = this.addFieldRecordToGroups(groups, record);
+        if (result.source === "apiName" && label) {
+          apiMatchLabels.add(label);
+        }
+      }
+    }
+
+    const lowerSearch = String(searchText || "").toLowerCase();
+    const labelsToExpand = Array.from(apiMatchLabels)
+      .filter(label => !label.toLowerCase().includes(lowerSearch));
+
+    if (labelsToExpand.length > 0 && labelsToExpand.length <= 20) {
+      const labelExpansionResults = await this.fetchFieldsByExactLabels(labelsToExpand, chunks, fieldSelect);
+      for (const result of labelExpansionResults) {
+        if (!result || !Array.isArray(result.records)) continue;
+
+        for (const record of result.records) {
+          this.addFieldRecordToGroups(groups, record);
+        }
+      }
+    }
+
+    return this.buildFieldGroups(groups);
+  }
+
   async loadFieldDependencies(fieldGroup) {
     if (!fieldGroup || !Array.isArray(fieldGroup.records) || fieldGroup.records.length === 0) {
-      this.setState({fieldDependencies: {dependsOn: [], referencedBy: []}, isLoadingDependencies: false});
+      this.setState({ fieldDependencies: { dependsOn: [], referencedBy: [] }, isLoadingDependencies: false });
       return;
     }
 
-    this.setState({isLoadingDependencies: true, fieldDependencies: {dependsOn: [], referencedBy: []}});
-    
+    this.setState({ isLoadingDependencies: true, fieldDependencies: { dependsOn: [], referencedBy: [] } });
+
     try {
       // Salesforce MetadataComponentDependency requires the 18-char ID for Custom Fields.
-      // FieldDefinition only gives us the DurableId (ObjectName.FieldApiName). 
+      // FieldDefinition only gives us the DurableId (ObjectName.FieldApiName).
       // So we must first lookup the CustomField IDs before we can query dependencies.
-      const customFieldRecords = fieldGroup.records.filter(r => r.apiName.endsWith('__c'));
+      const customFieldRecords = fieldGroup.records.filter(r => String(r.apiName || "").endsWith("__c"));
       let validDependencyIds = [];
 
       if (customFieldRecords.length > 0) {
         // Build DevNames from apiNames (e.g. "Namespace__Field__c" -> "Field" or "Namespace__Field")
         const devNames = customFieldRecords.map(r => {
-          let name = r.apiName.replace(/__c$/, '');
-          return name.includes('__') ? name.split('__')[1] : name;
+          let name = r.apiName.replace(/__c$/, "");
+          return name.includes("__") ? name.split("__")[1] : name;
         });
-        
+
         // Chunk custom field lookups to avoid URI limits
         for (let i = 0; i < devNames.length; i += 50) {
           const chunk = devNames.slice(i, i + 50);
-          const devNameList = Array.from(new Set(chunk)).map(n => `'${n}'`).join(',');
+          const devNameList = Array.from(new Set(chunk)).map(n => `'${n}'`).join(",");
           const cfQuery = `SELECT Id FROM CustomField WHERE DeveloperName IN (${devNameList})`;
-          const cfResult = await sfConn.rest("/services/data/v" + apiVersion + "/tooling/query?q=" + encodeURIComponent(cfQuery)).catch(() => ({records: []}));
-          
+          const cfResult = await sfConn.rest("/services/data/v" + apiVersion + "/tooling/query?q=" + encodeURIComponent(cfQuery)).catch(() => ({ records: [] }));
+
           if (cfResult && cfResult.records) {
             validDependencyIds.push(...cfResult.records.map(r => r.Id));
           }
@@ -358,7 +444,7 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
 
       // Note: Standard fields do not have tracked dependencies in MetadataComponentDependency.
       if (validDependencyIds.length === 0) {
-        this.setState({fieldDependencies: {dependsOn: [], referencedBy: []}, isLoadingDependencies: false});
+        this.setState({ fieldDependencies: { dependsOn: [], referencedBy: [] }, isLoadingDependencies: false });
         return;
       }
 
@@ -428,22 +514,22 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
       });
     } catch (err) {
       console.error("Error fetching field dependencies:", err);
-      this.setState({fieldDependencies: {dependsOn: [], referencedBy: []}, isLoadingDependencies: false});
+      this.setState({ fieldDependencies: { dependsOn: [], referencedBy: [] }, isLoadingDependencies: false });
     }
   }
 
   onKeyDown = (e) => {
     e.stopPropagation();
-    const {selectedIndex, filteredObjects} = this.state;
+    const { selectedIndex, filteredObjects } = this.state;
 
     if (e.key === "ArrowDown") {
       e.preventDefault();
       const newIndex = Math.min(selectedIndex + 1, filteredObjects.length - 1);
-      this.setState({selectedIndex: newIndex});
+      this.setState({ selectedIndex: newIndex });
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       const newIndex = Math.max(selectedIndex - 1, -1);
-      this.setState({selectedIndex: newIndex});
+      this.setState({ selectedIndex: newIndex });
     } else if (e.key === "Enter" && selectedIndex >= 0) {
       e.preventDefault();
       this.selectObject(filteredObjects[selectedIndex]);
@@ -453,16 +539,9 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
   selectObject = (obj) => {
     if (!obj) return;
 
-    const {sfHost} = this.props;
-    const baseUrl = "https://" + sfHost;
+    const url = this.getObjectFieldsSetupUrl(obj);
 
-    const url =
-      baseUrl +
-      "/lightning/setup/ObjectManager/" +
-      encodeURIComponent(obj.apiName) +
-      "/FieldsAndRelationships/view";
-
-    chrome.tabs.create({url});
+    chrome.tabs.create({ url });
 
     this.setState((prevState) => ({
       searchText: "",
@@ -476,160 +555,274 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
       return;
     }
 
-    this.setState(
-      {
-        selectedFieldKey: fieldGroup.key,
-        selectedField: fieldGroup,
+    const objects = Array.isArray(fieldGroup.objects)
+      ? [...fieldGroup.objects].sort((a, b) =>
+        (a.label || a.apiName).localeCompare(b.label || b.apiName)
+      )
+      : [];
+
+    this.setState({
+      selectedField: {
+        ...fieldGroup,
+        objects,
       },
-      () => this.loadFieldDependencies(fieldGroup)
-    );
+      fieldDependencies: { dependsOn: [], referencedBy: [] },
+    });
   };
 
   openFieldInSetup = (fieldGroup) => {
     if (!fieldGroup || !Array.isArray(fieldGroup.records) || fieldGroup.records.length === 0) {
       return;
     }
-    const record = fieldGroup.records[0];
-    const objectName = record.objectName;
-    if (!objectName) {
+    this.openFieldRecordInSetup(fieldGroup.records[0]);
+  };
+
+  openFieldRecordInSetup = (record) => {
+    const url = this.getFieldSetupUrl(record);
+    if (!url) {
       return;
     }
 
-    const {sfHost} = this.props;
-    const baseUrl = "https://" + sfHost;
-    const url =
-      baseUrl +
-      "/lightning/setup/ObjectManager/" +
-      encodeURIComponent(objectName) +
-      "/FieldsAndRelationships/view";
-
-    chrome.tabs.create({url});
+    chrome.tabs.create({ url });
   };
+
+  getMetadataSetupUrl(durableId, type) {
+    const { sfHost } = this.props;
+    const encodedAddress = encodeURIComponent(`/${durableId}?setupid=${type}`);
+    return `https://${sfHost}/lightning/setup/${type}/page?address=${encodedAddress}`;
+  }
+
+  getObjectFieldsSetupUrl(obj) {
+    const { sfHost } = this.props;
+    const objectName = obj.apiName;
+    const entityDurableId = obj.durableId || objectName;
+
+    if (objectName.endsWith("__mdt")) {
+      return this.getMetadataSetupUrl(entityDurableId, "CustomMetadata");
+    }
+
+    if (obj.isCustomSetting) {
+      return this.getMetadataSetupUrl(entityDurableId, "CustomSettings");
+    }
+
+    const objectManagerId = objectName.endsWith("__c") || objectName.endsWith("__kav")
+      ? entityDurableId
+      : objectName;
+
+    return `https://${sfHost}/lightning/setup/ObjectManager/${encodeURIComponent(objectManagerId)}/FieldsAndRelationships/view`;
+  }
+
+  getFieldSetupUrl(record) {
+    if (!record || !record.objectName) {
+      return null;
+    }
+
+    const { sfHost } = this.props;
+    const durableParts = String(record.durableId || "").split(".").filter(Boolean);
+    const entityDurableId = record.entityDurableId || durableParts[0] || record.objectName;
+    const fieldDurableId = durableParts.length > 1 ? durableParts[durableParts.length - 1] : record.apiName;
+
+    if (!fieldDurableId) {
+      return `https://${sfHost}/lightning/setup/ObjectManager/${encodeURIComponent(entityDurableId)}/FieldsAndRelationships/view`;
+    }
+
+    if (record.objectName.endsWith("__mdt")) {
+      return this.getMetadataSetupUrl(fieldDurableId, "CustomMetadata");
+    }
+
+    if (record.isCustomSetting) {
+      return this.getMetadataSetupUrl(fieldDurableId, "CustomSettings");
+    }
+
+    return `https://${sfHost}/lightning/setup/ObjectManager/${encodeURIComponent(entityDurableId)}/FieldsAndRelationships/${encodeURIComponent(fieldDurableId)}/view`;
+  }
 
   backToFields = () => {
     this.setState({
-      selectedFieldKey: null,
       selectedField: null,
     });
   };
 
   renderObjectsView() {
-    const {filteredObjects, selectedIndex, isLoading, fieldResults, searchText} = this.state;
+    const { filteredObjects, selectedIndex, isLoading } = this.state;
     const safeFilteredObjects = Array.isArray(filteredObjects) ? filteredObjects : [];
-    const showFieldHint = !isLoading && searchText && searchText.trim().length >= 2 && Array.isArray(fieldResults) && fieldResults.length > 0;
 
     if (isLoading) {
       return React.createElement(
         "div",
-        {className: "slds-m-vertical_medium slds-text-align_center"},
-        React.createElement("span", {className: "slds-spinner_container slds-spinner_container--small"}, "Loading objects...")
+        { className: "slds-m-vertical_medium slds-text-align_center" },
+        React.createElement("span", { className: "slds-spinner_container slds-spinner_container--small" }, "Loading objects...")
       );
     }
 
     if (safeFilteredObjects.length === 0) {
       return React.createElement(
         "div",
-        {className: "schema-explorer-empty-state slds-text-align_center slds-m-vertical_medium slds-text-color_weak"},
+        { className: "schema-explorer-empty-state slds-text-align_center slds-m-vertical_medium slds-text-color_weak" },
         "No objects found matching your search"
       );
     }
 
     return React.createElement(
       "div",
-      {className: "schema-explorer-objects-view"},
+      { className: "schema-explorer-objects-view" },
       React.createElement(
         "div",
-        {className: "schema-explorer-list"},
+        { className: "schema-explorer-list" },
         safeFilteredObjects.map((obj, index) =>
           React.createElement(
             "div",
             {
               key: obj.apiName,
               className:
-                "schema-explorer-item " +
-                (index === selectedIndex ? "schema-explorer-item--selected" : ""),
+                "schema-explorer-item "
+                + (index === selectedIndex ? "schema-explorer-item--selected" : ""),
               onClick: () => this.selectObject(obj),
             },
-            React.createElement("div", {className: "schema-explorer-item-label"}, obj.label),
-            React.createElement("div", {className: "schema-explorer-item-api"}, obj.apiName),
-            React.createElement("span", {className: "schema-explorer-item-type"}, obj.type)
+            React.createElement("div", { className: "schema-explorer-item-label" }, obj.label),
+            React.createElement("div", { className: "schema-explorer-item-api" }, obj.apiName),
+            React.createElement("span", { className: "schema-explorer-item-type" }, obj.type)
           )
         )
       )
     );
   }
 
-  renderFieldsView() {
-    const {fieldResults, selectedFieldKey, selectedField, isLoadingFields, searchText, fieldSearchError} = this.state;
-    const safeFieldResults = Array.isArray(fieldResults) ? fieldResults : [];
-
-    if (selectedField) {
-      return React.createElement(
-        "div",
-        {className: "schema-explorer-fields-view"},
-        this.renderFieldDetails(selectedField)
-      );
-    }
+  renderFieldObjectsPanel(fieldGroup) {
+    const objects = Array.isArray(fieldGroup.objects) ? fieldGroup.objects : [];
 
     return React.createElement(
       "div",
-      {className: "schema-explorer-fields-view"},
+      { className: "schema-explorer-field-objects-panel" },
+      React.createElement(
+        "div",
+        { className: "schema-explorer-field-objects-heading" },
+        `${objects.length} ${objects.length === 1 ? "object" : "objects"} containing ${fieldGroup.label}`
+      ),
+      React.createElement(
+        "div",
+        { className: "schema-explorer-field-objects-list" },
+        objects.length === 0
+          ? React.createElement(
+            "div",
+            { className: "schema-explorer-empty-state slds-text-color_weak" },
+            "No objects found for this field"
+          )
+          : objects.map((object) =>
+            React.createElement(
+              "div",
+              {
+                key: object.apiName,
+                className: "schema-explorer-field-object-row",
+                onClick: (e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  this.openFieldRecordInSetup(object.record);
+                },
+                onKeyDown: (e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    this.openFieldRecordInSetup(object.record);
+                  }
+                },
+                role: "button",
+                tabIndex: 0,
+                title: `Open ${object.apiName}.${object.record?.apiName || fieldGroup.label} in Salesforce setup`,
+              },
+              React.createElement("div", { className: "schema-explorer-field-object-name" }, object.apiName),
+              React.createElement("div", { className: "schema-explorer-field-object-label" }, object.label)
+            )
+          )
+      )
+    );
+  }
+
+  renderFieldResultItem(fieldGroup) {
+    const { selectedField } = this.state;
+    const isExpanded = selectedField?.key === fieldGroup.key;
+    const displayFieldGroup = isExpanded ? selectedField : fieldGroup;
+
+    return React.createElement(
+      "div",
+      {
+        key: fieldGroup.key,
+        className:
+          "schema-explorer-field-item schema-explorer-field-item--drilldown"
+          + (isExpanded ? " schema-explorer-field-item--expanded" : ""),
+        onClick: (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          this.selectField(fieldGroup);
+        },
+        onKeyDown: (e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            this.selectField(fieldGroup);
+          }
+        },
+        role: "button",
+        tabIndex: 0,
+        title: `Show ${fieldGroup.objectCount} ${fieldGroup.objectCount === 1 ? "object" : "objects"} containing ${fieldGroup.label}`,
+      },
+      React.createElement("div", { className: "schema-explorer-field-name" }, fieldGroup.label),
+      React.createElement(
+        "div",
+        { className: "schema-explorer-field-label" },
+        `${fieldGroup.apiNames.length === 1 ? fieldGroup.apiNames[0] : fieldGroup.apiNames.join(", ")} - ${fieldGroup.objectCount} ${fieldGroup.objectCount === 1 ? "object" : "objects"}`
+      ),
+      React.createElement("span", { className: "schema-explorer-field-type" }, fieldGroup.dataType || "CustomField"),
+      isExpanded ? this.renderFieldObjectsPanel(displayFieldGroup) : null
+    );
+  }
+
+  renderFieldsView() {
+    const { fieldResults, isLoadingFields, searchText, fieldSearchError } = this.state;
+    const safeFieldResults = Array.isArray(fieldResults) ? fieldResults : [];
+
+    return React.createElement(
+      "div",
+      { className: "schema-explorer-fields-view" },
       fieldSearchError
         ? React.createElement(
-            "div",
-            {className: "schema-explorer-field-search-error slds-notify slds-notify_alert slds-alert_error slds-m-bottom_small"},
-            React.createElement("span", {}, `Field search error: ${fieldSearchError}`)
-          )
+          "div",
+          { className: "schema-explorer-field-search-error slds-notify slds-notify_alert slds-alert_error slds-m-bottom_small" },
+          React.createElement("span", {}, `Field search error: ${fieldSearchError}`)
+        )
         : null,
       React.createElement(
         "div",
-        {className: "schema-explorer-fields-list"},
+        { className: "schema-explorer-fields-list" },
         isLoadingFields
           ? React.createElement(
-              "div",
-              {className: "schema-explorer-empty-state slds-text-align_center slds-m-vertical_medium slds-text-color_weak"},
-              "Searching fields..."
-            )
+            "div",
+            { className: "schema-explorer-empty-state slds-text-align_center slds-m-vertical_medium slds-text-color_weak" },
+            "Searching fields..."
+          )
           : safeFieldResults.length === 0
-          ? React.createElement(
+            ? React.createElement(
               "div",
-              {className: "schema-explorer-empty-state slds-text-align_center slds-m-vertical_medium slds-text-color_weak"},
+              { className: "schema-explorer-empty-state slds-text-align_center slds-m-vertical_medium slds-text-color_weak" },
               searchText && searchText.trim().length >= 2
                 ? "No fields found matching your search"
                 : "Enter 2+ characters to search fields"
             )
-          : safeFieldResults.map((fieldGroup, index) =>
-              React.createElement(
-                "div",
-                {
-                  key: fieldGroup.key,
-                  className: "schema-explorer-field-item",
-                  onClick: () => this.selectField(fieldGroup),
-                },
-                React.createElement("div", {className: "schema-explorer-field-name"}, fieldGroup.label),
-                React.createElement(
-                  "div",
-                  {className: "schema-explorer-field-label"},
-                  `${fieldGroup.apiNames.length === 1 ? fieldGroup.apiNames[0] : fieldGroup.apiNames.join(", ")} • ${fieldGroup.objectCount} ${fieldGroup.objectCount === 1 ? "object" : "objects"}`
-                ),
-                React.createElement("span", {className: "schema-explorer-field-type"}, fieldGroup.dataType || "CustomField")
-              )
-            )
+            : safeFieldResults.map((fieldGroup) => this.renderFieldResultItem(fieldGroup))
       )
     );
   }
 
   renderFieldDetails(fieldGroup) {
-    const {fieldDependencies, isLoadingDependencies} = this.state;
+    const { fieldDependencies, isLoadingDependencies } = this.state;
     return React.createElement(
       "div",
-      {className: "schema-explorer-field-details"},
+      { className: "schema-explorer-field-details" },
       React.createElement(
         "div",
-        {className: "schema-explorer-details-header"},
+        { className: "schema-explorer-details-header" },
         React.createElement(
           "div",
-          {className: "schema-explorer-details-header-left"},
+          { className: "schema-explorer-details-header-left" },
           React.createElement(
             "button",
             {
@@ -646,7 +839,7 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
             React.createElement("h3", null, fieldGroup.label),
             React.createElement(
               "div",
-              {className: "schema-explorer-detail-label", style: {textTransform: "none", letterSpacing: "normal"}},
+              { className: "schema-explorer-detail-label", style: { textTransform: "none", letterSpacing: "normal" } },
               fieldGroup.apiNames.length === 1 ? fieldGroup.apiNames[0] : `API Names: ${fieldGroup.apiNames.join(", ")}`
             )
           )
@@ -657,78 +850,95 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
             type: "button",
             className: "schema-explorer-details-close",
             onClick: () => this.openFieldInSetup(fieldGroup),
-            title: "Open object field setup in Salesforce",
+            title: "Open field setup in Salesforce",
           },
           "Open Setup"
         )
       ),
       React.createElement(
         "div",
-        {className: "schema-explorer-details-content"},
+        { className: "schema-explorer-details-content" },
         React.createElement(
           "div",
-          {className: "schema-explorer-detail-section"},
-          React.createElement("div", {className: "schema-explorer-detail-label"}, "Field details"),
-          React.createElement("div", {className: "schema-explorer-detail-value"}, `Field Label: ${fieldGroup.label}`),
-          React.createElement("div", {className: "schema-explorer-detail-value"}, `API Name(s): ${fieldGroup.apiNames.join(", ")}`),
-          React.createElement("div", {className: "schema-explorer-detail-value"}, `Type: ${fieldGroup.dataType || "Unknown"}`),
-          React.createElement("div", {className: "schema-explorer-detail-value"}, `Objects: ${fieldGroup.objectCount}`)
-        ),
-        React.createElement(
-          "div",
-          {className: "schema-explorer-detail-section"},
-          React.createElement("div", {className: "schema-explorer-detail-label"}, "Objects containing this field"),
+          { className: "schema-explorer-detail-section" },
           React.createElement(
             "div",
-            {className: "schema-explorer-objects-list"},
+            { className: "schema-explorer-detail-label" },
+            `${fieldGroup.objectCount} ${fieldGroup.objectCount === 1 ? "object" : "objects"} containing this field`
+          ),
+          React.createElement(
+            "div",
+            { className: "schema-explorer-objects-list" },
             fieldGroup.objects.map((object) =>
               React.createElement(
                 "div",
-                {key: object.apiName, className: "schema-explorer-object-badge"},
-                React.createElement("div", {className: "schema-explorer-object-name"}, object.apiName),
-                React.createElement("div", {className: "schema-explorer-object-label"}, object.label)
+                {
+                  key: object.apiName,
+                  className: "schema-explorer-object-badge schema-explorer-object-badge--clickable",
+                  onClick: () => this.openFieldRecordInSetup(object.record),
+                  onKeyDown: (e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      this.openFieldRecordInSetup(object.record);
+                    }
+                  },
+                  role: "button",
+                  tabIndex: 0,
+                  title: `Open ${object.apiName}.${object.record?.apiName || fieldGroup.label} in Salesforce setup`,
+                },
+                React.createElement("div", { className: "schema-explorer-object-name" }, object.apiName),
+                React.createElement("div", { className: "schema-explorer-object-label" }, object.label)
               )
             )
           )
         ),
         React.createElement(
           "div",
-          {className: "schema-explorer-detail-section"},
-          React.createElement("div", {className: "schema-explorer-detail-label"}, "Dependencies"),
+          { className: "schema-explorer-detail-section" },
+          React.createElement("div", { className: "schema-explorer-detail-label" }, "Field details"),
+          React.createElement("div", { className: "schema-explorer-detail-value" }, `Field Label: ${fieldGroup.label}`),
+          React.createElement("div", { className: "schema-explorer-detail-value" }, `API Name(s): ${fieldGroup.apiNames.join(", ")}`),
+          React.createElement("div", { className: "schema-explorer-detail-value" }, `Type: ${fieldGroup.dataType || "Unknown"}`),
+          React.createElement("div", { className: "schema-explorer-detail-value" }, `Objects: ${fieldGroup.objectCount}`)
+        ),
+        React.createElement(
+          "div",
+          { className: "schema-explorer-detail-section" },
+          React.createElement("div", { className: "schema-explorer-detail-label" }, "Dependencies"),
           isLoadingDependencies
-            ? React.createElement("div", {className: "schema-explorer-empty-state slds-text-align_center"}, "Loading dependencies...")
+            ? React.createElement("div", { className: "schema-explorer-empty-state slds-text-align_center" }, "Loading dependencies...")
             : React.createElement(
-                React.Fragment,
-                null,
-                React.createElement(
-                  "div",
-                  {className: "schema-explorer-references-list"},
-                  React.createElement("div", {className: "schema-explorer-detail-value"}, "Field depends on:"),
-                  fieldDependencies.dependsOn.length === 0
-                    ? React.createElement("div", {className: "schema-explorer-reference-item"}, "No upstream dependencies found")
-                    : fieldDependencies.dependsOn.map((dep, index) =>
-                        React.createElement(
-                          "div",
-                          {key: `${dep.type}-${dep.id}-${index}`, className: "schema-explorer-reference-item"},
-                          `${dep.type}: ${dep.name}${dep.namespace ? ` (${dep.namespace})` : ""}`
-                        )
-                      )
-                ),
-                React.createElement(
-                  "div",
-                  {className: "schema-explorer-references-list"},
-                  React.createElement("div", {className: "schema-explorer-detail-value"}, "Referenced by:"),
-                  fieldDependencies.referencedBy.length === 0
-                    ? React.createElement("div", {className: "schema-explorer-reference-item"}, "No downstream references found")
-                    : fieldDependencies.referencedBy.map((dep, index) =>
-                        React.createElement(
-                          "div",
-                          {key: `${dep.type}-${dep.id}-${index}`, className: "schema-explorer-reference-item"},
-                          `${dep.type}: ${dep.name}${dep.namespace ? ` (${dep.namespace})` : ""}`
-                        )
-                      )
-                )
+              React.Fragment,
+              null,
+              React.createElement(
+                "div",
+                { className: "schema-explorer-references-list" },
+                React.createElement("div", { className: "schema-explorer-detail-value" }, "Field depends on:"),
+                fieldDependencies.dependsOn.length === 0
+                  ? React.createElement("div", { className: "schema-explorer-reference-item" }, "No upstream dependencies found")
+                  : fieldDependencies.dependsOn.map((dep, index) =>
+                    React.createElement(
+                      "div",
+                      { key: `${dep.type}-${dep.id}-${index}`, className: "schema-explorer-reference-item" },
+                      `${dep.type}: ${dep.name}${dep.namespace ? ` (${dep.namespace})` : ""}`
+                    )
+                  )
+              ),
+              React.createElement(
+                "div",
+                { className: "schema-explorer-references-list" },
+                React.createElement("div", { className: "schema-explorer-detail-value" }, "Referenced by:"),
+                fieldDependencies.referencedBy.length === 0
+                  ? React.createElement("div", { className: "schema-explorer-reference-item" }, "No downstream references found")
+                  : fieldDependencies.referencedBy.map((dep, index) =>
+                    React.createElement(
+                      "div",
+                      { key: `${dep.type}-${dep.id}-${index}`, className: "schema-explorer-reference-item" },
+                      `${dep.type}: ${dep.name}${dep.namespace ? ` (${dep.namespace})` : ""}`
+                    )
+                  )
               )
+            )
         )
       )
     );
@@ -736,16 +946,16 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
 
   render() {
     const h = React.createElement;
-    const {searchText, error, activeView, filteredObjects, fieldResults} = this.state;
+    const { searchText, error, activeView, filteredObjects, fieldResults } = this.state;
     const objectCount = Array.isArray(filteredObjects) ? filteredObjects.length : 0;
     const fieldCount = Array.isArray(fieldResults) ? fieldResults.length : 0;
 
     return h(
       "div",
-      {className: "schema-explorer-container slds-p-horizontal_x-small"},
+      { className: "schema-explorer-container tab-container slds-p-horizontal_x-small" },
       h(
         "div",
-        {className: "schema-explorer-search slds-m-vertical_small"},
+        { className: "schema-explorer-search slds-m-vertical_small" },
         h("input", {
           type: "text",
           placeholder: "Search objects and fields...",
@@ -758,7 +968,7 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
       ),
       h(
         "div",
-        {className: "schema-explorer-segmented-control"},
+        { className: "schema-explorer-segmented-control" },
         h(
           "div",
           {
@@ -778,14 +988,14 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
       ),
       error
         ? h(
-            "div",
-            {className: "slds-notify slds-notify_alert slds-alert_error slds-m-vertical_small"},
-            h("span", {}, error)
-          )
+          "div",
+          { className: "slds-notify slds-notify_alert slds-alert_error slds-m-vertical_small" },
+          h("span", {}, error)
+        )
         : null,
       h(
         "div",
-        {className: "schema-explorer-content"},
+        { className: "schema-explorer-content" },
         activeView === "objects" ? this.renderObjectsView() : this.renderFieldsView()
       )
     );
