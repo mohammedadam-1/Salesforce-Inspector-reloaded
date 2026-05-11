@@ -312,6 +312,7 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
       ...group,
       objects: Array.from(group.objects.values()),
       objectCount: group.objects.size,
+      apiNames: Array.from(new Set(group.records.map(r => r.apiName))),
       // Pass all records so we can resolve their IDs later
       records: group.records,
     }));

@@ -5,6 +5,7 @@
   height: 100%;
   gap: 12px;
   min-height: 400px;
+  padding-bottom: 12px;
 }
 
 .schema-explorer-content {
@@ -58,11 +59,13 @@
 .schema-explorer-search {
   display: flex;
   gap: 8px;
+  position: relative;
+  z-index: 10;
 }
 
 .schema-explorer-input {
   width: 100%;
-  padding: 8px 12px;
+  padding: 10px 12px;
   font-size: 13px;
   border: 1px solid #ccc;
   border-radius: 4px;
@@ -601,17 +604,21 @@
   padding: 4px;
   border-radius: 6px;
   margin-bottom: 8px;
+  gap: 4px;
 }
 .schema-explorer-segment {
   flex: 1;
   text-align: center;
-  padding: 6px 12px;
+  padding: 8px 12px;
   cursor: pointer;
   border-radius: 4px;
   font-size: 13px;
   font-weight: 500;
   color: #495057;
   transition: all 0.2s ease;
+  border: none;
+  background: transparent;
+  user-select: none;
 }
 .schema-explorer-segment:hover {
   background: #dde2e6;
