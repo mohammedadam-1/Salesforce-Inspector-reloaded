@@ -3,7 +3,7 @@
 import { sfConn, apiVersion } from "./inspector.js";
 import { DataCache } from "./utils.js";
 
-const SCHEMA_CACHE_KEY = "SCHEMA_OBJECTS_LIST_V2";
+const SCHEMA_CACHE_KEY = "SCHEMA_OBJECTS_LIST_V7";
 
 class AllDataBoxSchemaExplorer extends React.PureComponent {
   constructor(props) {
@@ -83,43 +83,77 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
       const describe = await sfConn.rest("/services/data/v" + apiVersion + "/sobjects/");
       if (describe && describe.sobjects) {
         for (const sobject of describe.sobjects) {
+          if (!sobject.custom && !sobject.layoutable && !sobject.customSetting) {
+            continue; // Filter out system objects (not in Object Manager)
+          }
+
+          let type = "Standard Object";
+          if (sobject.custom) {
+            if (sobject.customSetting) type = "Custom Setting";
+            else if (sobject.name.endsWith("__mdt")) type = "Custom Metadata Type";
+            else if (sobject.name.endsWith("__e")) type = "Platform Event";
+            else if (sobject.name.endsWith("__b")) type = "Big Object";
+            else if (sobject.name.endsWith("__x")) type = "External Object";
+            else type = "Custom Object";
+          }
+
           objectsMap.set(sobject.name, {
             apiName: sobject.name,
             label: sobject.label || sobject.name,
-            type: "Standard",
+            type: type,
             durableId: sobject.name,
-            isCustomSetting: false,
+            isCustomSetting: sobject.customSetting || false,
           });
         }
       }
 
       try {
-        const entityQuery = "SELECT QualifiedApiName, Label, DurableId, IsCustomSetting FROM EntityDefinition ORDER BY Label LIMIT 2000";
-        const entityResult = await sfConn.rest(
-          "/services/data/v" + apiVersion + "/tooling/query?q=" + encodeURIComponent(entityQuery)
-        );
+        const allApiNames = Array.from(objectsMap.keys());
+        const chunks = [];
+        for (let i = 0; i < allApiNames.length; i += 100) {
+          chunks.push(allApiNames.slice(i, i + 100));
+        }
 
-        if (entityResult && entityResult.records) {
-          for (const record of entityResult.records) {
-            const apiName = record.QualifiedApiName;
-            const label = record.Label || apiName;
-            if (objectsMap.has(apiName)) {
-              objectsMap.get(apiName).label = label;
-              objectsMap.get(apiName).durableId = record.DurableId || apiName;
-              objectsMap.get(apiName).isCustomSetting = Boolean(record.IsCustomSetting);
-            } else {
-              objectsMap.set(apiName, {
-                apiName,
-                label,
-                type: "Custom",
-                durableId: record.DurableId || apiName,
-                isCustomSetting: Boolean(record.IsCustomSetting),
-              });
+        const entityQueries = chunks.map(chunk => {
+          const query = `SELECT QualifiedApiName, Label, DurableId, IsCustomSetting, IsCustomizable FROM EntityDefinition WHERE QualifiedApiName IN ('${chunk.join("','")}')`;
+          return sfConn.rest("/services/data/v" + apiVersion + "/tooling/query?q=" + encodeURIComponent(query)).catch(err => {
+            console.warn("EntityDefinition chunk query failed", err);
+            return null;
+          });
+        });
+
+        const results = await Promise.all(entityQueries);
+        const processedApiNames = new Set();
+
+        for (const result of results) {
+          if (result && result.records) {
+            for (const record of result.records) {
+              const apiName = record.QualifiedApiName;
+              processedApiNames.add(apiName);
+              
+              if (objectsMap.has(apiName)) {
+                objectsMap.get(apiName).label = record.Label || apiName;
+                objectsMap.get(apiName).durableId = record.DurableId || apiName;
+                objectsMap.get(apiName).isCustomSetting = Boolean(record.IsCustomSetting);
+                objectsMap.get(apiName).isCustomizable = Boolean(record.IsCustomizable);
+              }
+            }
+          }
+        }
+
+        // Final filtering: Remove standard objects that are NOT customizable (like BusinessHours, WorkTypeGroup)
+        for (const apiName of allApiNames) {
+          const obj = objectsMap.get(apiName);
+          if (obj && !obj.custom && !obj.isCustomSetting) {
+            // If it was processed by Tooling API and is NOT customizable, delete it.
+            // If it wasn't processed at all by EntityDefinition, it also means it's an internal system object.
+            if (!processedApiNames.has(apiName) || obj.isCustomizable === false) {
+              objectsMap.delete(apiName);
             }
           }
         }
       } catch (toolingErr) {
-        console.warn("EntityDefinition query failed, using basic info only:", toolingErr);
+        console.warn("EntityDefinition queries failed, using basic info only:", toolingErr);
       }
 
       const objects = Array.from(objectsMap.values()).sort((a, b) =>
