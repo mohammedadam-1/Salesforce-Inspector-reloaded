@@ -714,24 +714,47 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
               {
                 key: object.apiName,
                 className: "schema-explorer-field-object-row",
-                onClick: (e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  this.openFieldRecordInSetup(object.record);
-                },
-                onKeyDown: (e) => {
-                  if (e.key === "Enter" || e.key === " ") {
+                style: { display: "flex", justifyContent: "space-between", alignItems: "center" }
+              },
+              React.createElement(
+                "div",
+                {
+                  style: { flex: 1, cursor: "pointer" },
+                  onClick: (e) => {
                     e.preventDefault();
                     e.stopPropagation();
                     this.openFieldRecordInSetup(object.record);
-                  }
+                  },
+                  onKeyDown: (e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      this.openFieldRecordInSetup(object.record);
+                    }
+                  },
+                  role: "button",
+                  tabIndex: 0,
+                  title: `Open ${object.apiName}.${object.record?.apiName || fieldGroup.label} in Salesforce setup`,
                 },
-                role: "button",
-                tabIndex: 0,
-                title: `Open ${object.apiName}.${object.record?.apiName || fieldGroup.label} in Salesforce setup`,
-              },
-              React.createElement("div", { className: "schema-explorer-field-object-name" }, object.apiName),
-              React.createElement("div", { className: "schema-explorer-field-object-label" }, object.label)
+                React.createElement("div", { className: "schema-explorer-field-object-name" }, object.apiName),
+                React.createElement("div", { className: "schema-explorer-field-object-label" }, object.label)
+              ),
+              React.createElement(
+                "button",
+                {
+                  type: "button",
+                  className: "slds-button slds-button_brand",
+                  style: { padding: "0 8px", border: "none", backgroundColor: "#0176d3", color: "white", fontSize: "11px", height: "22px", lineHeight: "22px", marginLeft: "8px" },
+                  onClick: (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const url = chrome.runtime.getURL(`field-analysis.html?host=${encodeURIComponent(this.props.sfHost)}&fieldName=${encodeURIComponent(fieldGroup.apiNames[0])}&objectName=${encodeURIComponent(object.apiName)}`);
+                    chrome.tabs.create({ url });
+                  },
+                  title: `AI Impact Analysis for ${object.apiName}`,
+                },
+                "✨ AI Analysis"
+              )
             )
           )
       )
@@ -845,14 +868,35 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
           )
         ),
         React.createElement(
-          "button",
-          {
-            type: "button",
-            className: "schema-explorer-details-close",
-            onClick: () => this.openFieldInSetup(fieldGroup),
-            title: "Open field setup in Salesforce",
-          },
-          "Open Setup"
+          "div",
+          { className: "schema-explorer-details-actions", style: { display: "flex", gap: "8px" } },
+          React.createElement(
+            "button",
+            {
+              type: "button",
+              className: "schema-explorer-details-close slds-button slds-button_brand",
+              style: { padding: "0 8px", border: "none", backgroundColor: "#0176d3", color: "white" },
+              onClick: () => {
+                const objectName = fieldGroup.objects[0]?.apiName || "Unknown";
+                const fieldApiName = fieldGroup.apiNames[0];
+                const url = chrome.runtime.getURL(`field-analysis.html?host=${encodeURIComponent(this.props.sfHost)}&fieldName=${encodeURIComponent(fieldApiName)}&objectName=${encodeURIComponent(objectName)}`);
+                chrome.tabs.create({ url });
+              },
+              title: "AI Impact Analysis",
+            },
+            "✨ AI Analysis"
+          ),
+          React.createElement(
+            "button",
+            {
+              type: "button",
+              className: "schema-explorer-details-close slds-button slds-button_neutral",
+              style: { padding: "0 8px" },
+              onClick: () => this.openFieldInSetup(fieldGroup),
+              title: "Open field setup in Salesforce",
+            },
+            "Open Setup"
+          )
         )
       ),
       React.createElement(
