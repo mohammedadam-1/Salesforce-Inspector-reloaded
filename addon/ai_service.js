@@ -4,6 +4,58 @@ const DEFAULT_GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
 const DEFAULT_GROQ_MODEL = "mixtral-8x7b-32768";
 const DEFAULT_MAX_QUERIES = 8;
 
+const SALESFORCE_TOOLS = [
+  {
+    name: "query_salesforce",
+    type: "function",
+    description: "Execute a SOQL query to fetch records from Salesforce. Use for finding records, counts, relationships.",
+    parameters: {
+      type: "object",
+      properties: {
+        soql: {
+          type: "string",
+          description: "Valid SOQL query. Example: SELECT Id, Name FROM Account WHERE OwnerId = '005xx' LIMIT 50"
+        }
+      },
+      required: ["soql"]
+    }
+  },
+  {
+    name: "describe_object",
+    type: "function",
+    description: "Get the list of fields available on a Salesforce object. Use this before querying an object you are unsure about.",
+    parameters: {
+      type: "object",
+      properties: {
+        objectName: {
+          type: "string",
+          description: "Salesforce API name of the object. Example: Account, Contact, Opportunity, Case"
+        }
+      },
+      required: ["objectName"]
+    }
+  },
+  {
+    name: "get_record",
+    type: "function",
+    description: "Fetch a single Salesforce record by ID with all key fields.",
+    parameters: {
+      type: "object",
+      properties: {
+        objectName: {
+          type: "string",
+          description: "Salesforce object API name. Example: Account"
+        },
+        recordId: {
+          type: "string",
+          description: "18-character Salesforce record ID"
+        }
+      },
+      required: ["objectName", "recordId"]
+    }
+  }
+];
+
 function readNumberSetting(key, defaultValue, min, max) {
   const value = parseInt(localStorage.getItem(key), 10);
   if (Number.isNaN(value)) {
@@ -221,10 +273,12 @@ export function buildFieldDependencyAnalysisPrompt({ field, objectName, dependen
   return `You are an expert Salesforce Architect analyzing a specific field's dependencies.
 
 STRICT RULES:
-1. You must respond with ONLY a valid JSON object.
-2. DO NOT wrap the JSON in markdown code blocks like \`\`\`json.
+1. Respond with exactly one valid JSON object and nothing else.
+2. DO NOT wrap the JSON in markdown code blocks.
 3. DO NOT include any conversational text before or after the JSON.
-4. Categorize riskLevel as "safe", "moderate", or "high".
+4. Use only the keys: riskLevel, executiveSummary, refactoringRisks, recommendations.
+5. Categorize riskLevel as "safe", "moderate", or "high".
+6. If there are no dependencies in a category, return an empty array for that category.
 
 Context:
 - Object: ${objectName}
@@ -306,6 +360,139 @@ export class UserInsightAiService {
     });
     return parseJsonOutput(response, "Unable to parse AI-generated summary.");
   }
+
+  async runAgent(userMessage, sfConn, apiVersion, onThinking = null) {
+    this.ensureConfigured();
+
+    const messages = [
+      {
+        role: "system",
+        content: `You are an expert Salesforce assistant with direct access to a Salesforce org via tools.
+
+Your capabilities:
+- query_salesforce: run any SOQL query
+- describe_object: inspect fields on any object
+- get_record: fetch a single record by ID
+
+Rules:
+- Always use describe_object before querying an unfamiliar object name.
+- Never guess field names — verify with describe_object first.
+- If a query returns 0 results, try a broader query before concluding.
+- Keep queries efficient — use LIMIT when counts are large.
+- When you have enough information, stop calling tools and provide a final answer.
+- Be concise, specific, and include counts, names, and key findings where useful.`
+      },
+      {
+        role: "user",
+        content: userMessage
+      }
+    ];
+
+    const toolExecutors = {
+      query_salesforce: async ({soql}) => {
+        const result = await sfConn.rest(
+          `/services/data/v${apiVersion}/query?q=${encodeURIComponent(soql)}`
+        );
+        return {
+          totalSize: result.totalSize,
+          records: Array.isArray(result.records) ? result.records.slice(0, 50) : []
+        };
+      },
+      describe_object: async ({objectName}) => {
+        const result = await sfConn.rest(
+          `/services/data/v${apiVersion}/sobjects/${encodeURIComponent(objectName)}/describe`
+        );
+        return Array.isArray(result.fields)
+          ? result.fields.map(f => ({
+              name: f.name,
+              label: f.label,
+              type: f.type,
+              referenceTo: Array.isArray(f.referenceTo) && f.referenceTo.length > 0 ? f.referenceTo : undefined
+            }))
+          : [];
+      },
+      get_record: async ({objectName, recordId}) => {
+        return await sfConn.rest(
+          `/services/data/v${apiVersion}/sobjects/${encodeURIComponent(objectName)}/${encodeURIComponent(recordId)}`
+        );
+      }
+    };
+
+    const MAX_ITERATIONS = 10;
+
+    for (let i = 0; i < MAX_ITERATIONS; i++) {
+      const response = await sendAiRequest(this.settings, {
+        model: this.settings.model,
+        messages,
+        tools: SALESFORCE_TOOLS,
+        tool_choice: "auto",
+        temperature: 0,
+        max_tokens: 4096
+      });
+
+      let choice = Array.isArray(response.choices) && response.choices[0];
+      if (!choice) {
+        const fallbackText = extractOutputText(response).trim();
+        if (fallbackText) {
+          return {
+            answer: fallbackText,
+            iterations: i + 1
+          };
+        }
+        throw new Error("No response from AI.");
+      }
+
+      const toolCalls = choice.message?.tool_calls || choice.tool_calls || [];
+
+      if (choice.finish_reason === "stop" || toolCalls.length === 0) {
+        const answerText = typeof choice.message?.content === "string"
+          ? choice.message.content
+          : (choice.text || extractOutputText(response));
+        return {
+          answer: answerText || "",
+          iterations: i + 1
+        };
+      }
+
+      messages.push(choice.message || { role: "assistant", content: "", tool_calls: toolCalls });
+
+      for (const toolCall of toolCalls) {
+        const toolName = toolCall.function?.name;
+        let args = {};
+        try {
+          args = JSON.parse(toolCall.function?.arguments || "{}");
+        } catch (err) {
+          args = { error: "Invalid tool arguments JSON" };
+        }
+
+        if (onThinking) {
+          onThinking(toolName || "tool", args);
+        }
+
+        let toolResult;
+        if (!toolName || !toolExecutors[toolName]) {
+          toolResult = { error: `Unknown tool: ${toolName}` };
+        } else {
+          try {
+            toolResult = await toolExecutors[toolName](args);
+          } catch (err) {
+            toolResult = { error: err.message || String(err) };
+          }
+        }
+
+        messages.push({
+          role: "tool",
+          tool_call_id: toolCall.id,
+          content: JSON.stringify(toolResult)
+        });
+      }
+    }
+
+    return {
+      answer: "The agent reached the maximum number of iterations without producing a final answer. Please try a more specific question.",
+      iterations: MAX_ITERATIONS
+    };
+  }
 }
 
 export class FieldDependencyAiService {
@@ -327,7 +514,7 @@ export class FieldDependencyAiService {
       messages: [
         {
           role: "system",
-          content: "You are a JSON-only API. Respond with a single valid JSON object. No markdown, no code fences, no explanation — raw JSON only."
+          content: "You are a JSON-only API. Respond with exactly one valid JSON object containing keys riskLevel, executiveSummary, refactoringRisks, and recommendations. No markdown, no code fences, no explanation."
         },
         {
           role: "user",
@@ -337,6 +524,18 @@ export class FieldDependencyAiService {
       temperature: 0,
       max_tokens: 2048
     });
-    return parseJsonOutput(response, "Unable to parse AI-generated field analysis.");
+
+    try {
+      return parseJsonOutput(response, "Unable to parse AI-generated field analysis.");
+    } catch (error) {
+      const text = extractOutputText(response).trim();
+      return {
+        riskLevel: "unknown",
+        executiveSummary: text || "The AI returned an unexpected response.",
+        refactoringRisks: [],
+        recommendations: [],
+        rawResponse: text
+      };
+    }
   }
 }
