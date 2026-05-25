@@ -1,4 +1,4 @@
-import {Constants} from "./utils.js";
+import { Constants } from "./utils.js";
 
 const DEFAULT_GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
 const DEFAULT_GROQ_MODEL = "mixtral-8x7b-32768";
@@ -32,7 +32,7 @@ function sendAiRequest(settings, payload) {
         // Build a simple input string from the messages array if provided
         if (Array.isArray(payload.messages)) {
           const combined = payload.messages.map(m => (m.content || m.text || "")).filter(Boolean).join("\n\n");
-          payloadToSend = {...payload};
+          payloadToSend = { ...payload };
           payloadToSend.input = combined || payloadToSend.input || "";
           delete payloadToSend.messages;
         }
@@ -156,7 +156,7 @@ function userForPrompt(user) {
   };
 }
 
-export function buildQueryGenerationPrompt({user, objectInventory, maxQueries}) {
+export function buildQueryGenerationPrompt({ user, objectInventory, maxQueries }) {
   return `You are selecting which Salesforce objects and filter relationships to inspect for a given User.
 
 Task:
@@ -194,7 +194,7 @@ Expected JSON shape:
 }`;
 }
 
-export function buildSummaryPrompt({user, sections}) {
+export function buildSummaryPrompt({ user, sections }) {
   return `You are summarizing Salesforce query results for an admin.
 
 Rules:
@@ -217,13 +217,38 @@ Expected JSON shape:
 }`;
 }
 
+export function buildFieldDependencyAnalysisPrompt({ field, objectName, dependencies }) {
+  return `You are an expert Salesforce Architect analyzing a specific field's dependencies.
+
+STRICT RULES:
+1. You must respond with ONLY a valid JSON object.
+2. DO NOT wrap the JSON in markdown code blocks like \`\`\`json.
+3. DO NOT include any conversational text before or after the JSON.
+4. Categorize riskLevel as "safe", "moderate", or "high".
+
+Context:
+- Object: ${objectName}
+- Field: ${field}
+
+Dependencies:
+${JSON.stringify(dependencies, null, 2)}
+
+Expected Output Format:
+{
+  "riskLevel": "safe",
+  "executiveSummary": "Summary here.",
+  "refactoringRisks": ["Risk 1"],
+  "recommendations": ["Recommendation 1"]
+}`;
+}
+
 export class UserInsightAiService {
   constructor() {
     this.settings = getAiSettings();
   }
 
   getConfiguration() {
-    return {...this.settings};
+    return { ...this.settings };
   }
 
   ensureConfigured() {
@@ -232,7 +257,7 @@ export class UserInsightAiService {
     }
   }
 
-  async generateQueryPlan({user, objectInventory}) {
+  async generateQueryPlan({ user, objectInventory }) {
     this.ensureConfigured();
     const prompt = buildQueryGenerationPrompt({
       user,
@@ -260,9 +285,9 @@ export class UserInsightAiService {
 
 
 
-  async summarize({user, sections}) {
+  async summarize({ user, sections }) {
     this.ensureConfigured();
-    const prompt = buildSummaryPrompt({user, sections});
+    const prompt = buildSummaryPrompt({ user, sections });
     const response = await sendAiRequest(this.settings, {
       model: this.settings.model,
       messages: [
@@ -283,5 +308,35 @@ export class UserInsightAiService {
   }
 }
 
+export class FieldDependencyAiService {
+  constructor() {
+    this.settings = getAiSettings();
+  }
 
+  ensureConfigured() {
+    if (!this.settings.apiKey) {
+      throw new Error("Groq API key is not configured. Open Options > AI and add an API key.");
+    }
+  }
 
+  async analyzeField({ field, objectName, dependencies }) {
+    this.ensureConfigured();
+    const prompt = buildFieldDependencyAnalysisPrompt({ field, objectName, dependencies });
+    const response = await sendAiRequest(this.settings, {
+      model: this.settings.model,
+      messages: [
+        {
+          role: "system",
+          content: "You are a JSON-only API. Respond with a single valid JSON object. No markdown, no code fences, no explanation — raw JSON only."
+        },
+        {
+          role: "user",
+          content: prompt
+        }
+      ],
+      temperature: 0,
+      max_tokens: 2048
+    });
+    return parseJsonOutput(response, "Unable to parse AI-generated field analysis.");
+  }
+}

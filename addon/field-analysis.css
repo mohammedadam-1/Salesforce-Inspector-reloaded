@@ -1,0 +1,130 @@
+:root {
+  --primary-color: #0176d3;
+  --bg-color: #ffffff;
+  --text-color: #181818;
+  --border-color: #e5e5e5;
+  --card-bg: #f3f3f3;
+  --high-risk: #ea001e;
+  --moderate-risk: #dd7a01;
+  --safe: #2e844a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-color: #1a1a1a;
+    --text-color: #e0e0e0;
+    --border-color: #333333;
+    --card-bg: #2a2a2a;
+  }
+}
+
+body {
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  font-family: var(--lwc-fontFamily, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif);
+}
+
+.fa-header {
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.fa-badge {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 0.875rem;
+  color: white;
+}
+
+.fa-badge.high {
+  background-color: var(--high-risk);
+}
+
+.fa-badge.moderate {
+  background-color: var(--moderate-risk);
+}
+
+.fa-badge.safe {
+  background-color: var(--safe);
+}
+
+.fa-grid {
+  display: grid;
+  grid-template-columns: 1fr 2fr;
+  gap: 2rem;
+}
+
+.fa-card {
+  background-color: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 0.5rem;
+  padding: 1.5rem;
+}
+
+.fa-insight-section {
+  margin-bottom: 1.5rem;
+}
+
+.fa-dependency-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.fa-dependency-item {
+  background-color: var(--bg-color);
+  border: 1px solid var(--border-color);
+  border-radius: 0.25rem;
+  padding: 0.75rem 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.fa-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 200px;
+  color: var(--text-color);
+  opacity: 0.7;
+}
+
+.fa-loading-spinner {
+  border: 3px solid rgba(0, 0, 0, 0.1);
+  border-top: 3px solid var(--primary-color);
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  animation: spin 1s linear infinite;
+  margin-bottom: 1rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  .fa-loading-spinner {
+    border: 3px solid rgba(255, 255, 255, 0.1);
+    border-top: 3px solid var(--primary-color);
+  }
+}
+
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.fa-error-banner {
+  background-color: rgba(234, 0, 30, 0.1);
+  border-left: 4px solid var(--high-risk);
+  padding: 1rem;
+  margin-bottom: 1.5rem;
+  color: var(--text-color);
+}
