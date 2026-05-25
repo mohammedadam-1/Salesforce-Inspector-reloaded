@@ -1,6 +1,6 @@
 /* global React ReactDOM */
 import { sfConn, apiVersion } from "./inspector.js";
-import { FieldDependencyAiService } from "./ai_service.js";
+import { FieldDependencyAiService, UserInsightAiService } from "./ai_service.js";
 
 class FieldAnalysisApp extends React.Component {
   constructor(props) {
@@ -16,10 +16,18 @@ class FieldAnalysisApp extends React.Component {
       loadingStep: "Initializing...",
       error: null,
       dependencies: null,
-      aiInsight: null
+      aiInsight: null,
+      agentPrompt: "",
+      agentStatus: "",
+      agentOutput: "",
+      agentError: null,
+      agentRunning: false
     };
 
     this.aiService = new FieldDependencyAiService();
+    this.agentService = new UserInsightAiService();
+    this.onAgentPromptChange = this.onAgentPromptChange.bind(this);
+    this.onAgentRun = this.onAgentRun.bind(this);
   }
 
   async componentDidMount() {
@@ -32,6 +40,39 @@ class FieldAnalysisApp extends React.Component {
       });
     } catch (err) {
       this.setState({ error: err.message, loadingStep: null });
+    }
+  }
+
+  onAgentPromptChange(e) {
+    this.setState({ agentPrompt: e.target.value });
+  }
+
+  async onAgentRun() {
+    const prompt = (this.state.agentPrompt || "").trim();
+    if (!prompt) {
+      this.setState({ agentError: "Enter a question or instruction for the Salesforce agent." });
+      return;
+    }
+
+    this.setState({ agentRunning: true, agentStatus: "Agent is thinking...", agentOutput: "", agentError: null });
+
+    try {
+      const result = await this.agentService.runAgent(
+        prompt,
+        sfConn,
+        apiVersion,
+        (tool, args) => {
+          this.setState({ agentStatus: `Calling ${tool}...`, agentOutput: JSON.stringify(args, null, 2) });
+        }
+      );
+
+      this.setState({
+        agentOutput: result.answer || "",
+        agentStatus: `Done in ${result.iterations} ${result.iterations === 1 ? "step" : "steps"}.`,
+        agentRunning: false
+      });
+    } catch (err) {
+      this.setState({ agentError: err?.message || String(err), agentStatus: "", agentRunning: false });
     }
   }
 
@@ -187,6 +228,41 @@ class FieldAnalysisApp extends React.Component {
     );
   }
 
+  renderAgentPanel() {
+    const { agentPrompt, agentStatus, agentOutput, agentError, agentRunning } = this.state;
+
+    return React.createElement(
+      "div",
+      { className: "fa-card" },
+      React.createElement("h2", { className: "slds-text-heading_medium slds-m-bottom_medium" }, "Ask Salesforce AI"),
+      React.createElement("p", { className: "slds-text-color_weak slds-m-bottom_small" }, "Ask a question about this Salesforce org and the agent will query Salesforce automatically."),
+      React.createElement("textarea", {
+        className: "fa-agent-input",
+        value: agentPrompt,
+        onChange: this.onAgentPromptChange,
+        placeholder: "Example: Find active Accounts with no Cases in the last 90 days.",
+        disabled: agentRunning
+      }),
+      React.createElement(
+        "div",
+        { style: { marginTop: "0.75rem", display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" } },
+        React.createElement(
+          "button",
+          {
+            type: "button",
+            className: "slds-button slds-button_brand",
+            onClick: this.onAgentRun,
+            disabled: agentRunning
+          },
+          agentRunning ? "Running..." : "Run Agent"
+        ),
+        React.createElement("span", { className: "fa-agent-status" }, agentStatus)
+      ),
+      agentError ? React.createElement("div", { className: "fa-agent-error" }, agentError) : null,
+      agentOutput ? React.createElement("pre", { className: "fa-agent-result" }, agentOutput) : null
+    );
+  }
+
   render() {
     const { loadingStep, error, aiInsight, dependencies } = this.state;
 
@@ -204,6 +280,7 @@ class FieldAnalysisApp extends React.Component {
       !loadingStep && !error ? React.createElement(
         "div",
         { className: "fa-grid" },
+        this.renderAgentPanel(),
         React.createElement(
           "div",
           { className: "fa-card" },
