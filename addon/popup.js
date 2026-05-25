@@ -1351,6 +1351,7 @@ class AllDataBox extends React.PureComponent {
                     sfHost,
                     linkTarget,
                     contextPath,
+                    openSearchInNewWindowOnClick: true,
                   }
                 )
                 : "AllData aspect " + activeSearchAspect + " not implemented"

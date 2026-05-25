@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <title>Schema Explorer</title>
+  <style>
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      background: #fff;
+    }
+
+    .schema-explorer-boot {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 12px;
+      color: #16325c;
+      font-family: "Salesforce Sans", Arial, sans-serif;
+      background: #fff;
+    }
+
+    .schema-explorer-boot-spinner {
+      width: 28px;
+      height: 28px;
+      border: 3px solid #d8dde6;
+      border-top-color: #0176d3;
+      border-radius: 50%;
+      animation: schemaExplorerSpin 0.8s linear infinite;
+    }
+
+    @keyframes schemaExplorerSpin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div id="bootLoading" class="schema-explorer-boot">
+    <div class="schema-explorer-boot-spinner"></div>
+    <div>Loading Schema Explorer...</div>
+  </div>
+  <div id="root"></div>
+  <script defer src="schema-explorer-bootstrap.js"></script>
+</body>
+
+</html>

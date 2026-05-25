@@ -89,7 +89,8 @@
         "event-monitor.html",
         "flow-scanner.html",
         "debug-log.html",
-        "user-insight-ai.html"
+        "user-insight-ai.html",
+        "schema-explorer.html"
       ],
       "matches": [
         "https://*.salesforce.com/*",

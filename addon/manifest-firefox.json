@@ -85,7 +85,8 @@
     "options.html",
     "event-monitor.html",
     "flow-scanner.html",
-    "user-insight-ai.html"
+    "user-insight-ai.html",
+    "schema-explorer.html"
   ],
   "incognito": "spanning",
   "manifest_version": 2

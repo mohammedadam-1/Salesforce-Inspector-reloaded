@@ -8,15 +8,17 @@ const SCHEMA_CACHE_KEY = "SCHEMA_OBJECTS_LIST_V7";
 class AllDataBoxSchemaExplorer extends React.PureComponent {
   constructor(props) {
     super(props);
+    const initialSearchText = String(props.initialSearchText || "").trim();
+
     this.state = {
-      searchText: "",
+      searchText: initialSearchText,
       objects: [],
       filteredObjects: [],
       fieldResults: [],
       selectedIndex: -1,
       selectedField: null,
       fieldDependencies: { dependsOn: [], referencedBy: [] },
-      isLoading: false,
+      isLoading: true,
       isLoadingFields: false,
       isLoadingDependencies: false,
       fieldSearchError: null,
@@ -24,6 +26,7 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
     };
 
     this.fieldSearchTimer = null;
+    this.lastStandaloneLaunchAt = 0;
   }
 
   componentDidMount() {
@@ -41,11 +44,21 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
 
     this.getSchemaObjects(this.props.sfHost)
       .then((objects) => {
-        this.setState({
-          objects,
-          filteredObjects: objects,
-          isLoading: false,
-        });
+        this.setState(
+          {
+            objects,
+            filteredObjects: objects,
+            isLoading: false,
+          },
+          () => {
+            if (this.state.searchText) {
+              this.filterObjects(this.state.searchText);
+              if (this.state.searchText.length >= 2) {
+                this.loadFieldResults(this.state.searchText);
+              }
+            }
+          }
+        );
       })
       .catch((err) => {
         console.error("Error loading schema objects:", err);
@@ -183,6 +196,108 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
         this.loadFieldResults(searchText);
       }
     );
+  };
+
+  shouldLaunchStandaloneExplorer() {
+    return Boolean(this.props.openSearchInNewWindowOnClick);
+  }
+
+  launchStandaloneExplorer = () => {
+    if (!this.shouldLaunchStandaloneExplorer()) {
+      return;
+    }
+
+    const now = Date.now();
+    if (now - this.lastStandaloneLaunchAt < 400) {
+      return;
+    }
+    this.lastStandaloneLaunchAt = now;
+
+    const params = new URLSearchParams();
+    params.set("host", this.props.sfHost);
+    params.set("ts", String(Date.now()));
+    if (this.state.searchText) {
+      params.set("q", this.state.searchText);
+    }
+
+    const url = chrome.runtime.getURL(`schema-explorer.html?${params.toString()}`);
+    const hasWindowsApi = chrome?.windows?.create && typeof chrome.windows.create === "function";
+    const hasTabsApi = chrome?.tabs?.create && chrome?.tabs?.onUpdated;
+
+    if (hasWindowsApi && hasTabsApi) {
+      chrome.tabs.create({ url, active: false }, (tab) => {
+        if (chrome.runtime.lastError || !tab?.id) {
+          chrome.windows.create({
+            url,
+            type: "normal",
+            width: 1200,
+            height: 900,
+            focused: true,
+          });
+          return;
+        }
+
+        const tabId = tab.id;
+        let hasOpenedWindow = false;
+        let fallbackTimer = null;
+
+        const cleanup = () => {
+          if (fallbackTimer) {
+            clearTimeout(fallbackTimer);
+            fallbackTimer = null;
+          }
+          chrome.tabs.onUpdated.removeListener(onUpdated);
+        };
+
+        const openLoadedTabInWindow = () => {
+          if (hasOpenedWindow) return;
+          hasOpenedWindow = true;
+          cleanup();
+          chrome.windows.create({
+            tabId,
+            type: "normal",
+            width: 1200,
+            height: 900,
+            focused: true,
+          });
+        };
+
+        const onUpdated = (updatedTabId, changeInfo) => {
+          if (updatedTabId !== tabId) return;
+          if (changeInfo.status === "complete") {
+            openLoadedTabInWindow();
+          }
+        };
+
+        chrome.tabs.onUpdated.addListener(onUpdated);
+        fallbackTimer = setTimeout(openLoadedTabInWindow, 3500);
+      });
+      return;
+    }
+
+    chrome.tabs.create({ url });
+  };
+
+  onSearchInputMouseDown = (e) => {
+    if (!this.shouldLaunchStandaloneExplorer()) {
+      return;
+    }
+
+    e.preventDefault();
+    e.stopPropagation();
+    this.launchStandaloneExplorer();
+  };
+
+  onSearchInputKeyDown = (e) => {
+    if (!this.shouldLaunchStandaloneExplorer()) {
+      this.onKeyDown(e);
+      return;
+    }
+
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      this.launchStandaloneExplorer();
+    }
   };
 
   switchView = (view) => {
@@ -1025,6 +1140,7 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
   render() {
     const h = React.createElement;
     const { searchText, error, activeView, filteredObjects, fieldResults } = this.state;
+    const searchOpensStandaloneWindow = this.shouldLaunchStandaloneExplorer();
     const objectCount = Array.isArray(filteredObjects) ? filteredObjects.length : 0;
     const fieldCount = Array.isArray(fieldResults) ? fieldResults.length : 0;
 
@@ -1036,12 +1152,14 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
         { className: "schema-explorer-search slds-m-vertical_small" },
         h("input", {
           type: "text",
-          placeholder: "Search objects and fields...",
+          placeholder: searchOpensStandaloneWindow ? "Click to open Schema Explorer window..." : "Search objects and fields...",
           value: searchText,
-          onChange: this.onSearchChange,
-          onKeyDown: this.onKeyDown,
+          onChange: searchOpensStandaloneWindow ? undefined : this.onSearchChange,
+          onMouseDown: this.onSearchInputMouseDown,
+          onKeyDown: this.onSearchInputKeyDown,
           className: "slds-input schema-explorer-input",
-          autoFocus: true,
+          autoFocus: !searchOpensStandaloneWindow,
+          readOnly: searchOpensStandaloneWindow,
         })
       ),
       h(
