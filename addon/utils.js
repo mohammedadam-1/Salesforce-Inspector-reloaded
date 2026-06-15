@@ -750,10 +750,11 @@ export class DataCache {
 
     try {
       const result = await storageApi.get(storageKey);
-      const cached = result[storageKey];
+      const cached = result[storageKey]; 
 
       if (!cached) {
         return null;
+        
       }
 
       //check if the cache is valid

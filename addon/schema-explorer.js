@@ -409,6 +409,69 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
     }
   }
 
+  async fetchAllToolingQueryRecords(soql) {
+    const records = [];
+    let queryUrl = "/services/data/v" + apiVersion + "/tooling/query?q=" + encodeURIComponent(soql);
+
+    while (queryUrl) {
+      const result = await sfConn.rest(queryUrl);
+      if (Array.isArray(result?.records)) {
+        records.push(...result.records);
+      }
+      queryUrl = result?.nextRecordsUrl || null;
+    }
+
+    return records;
+  }
+
+  async safeFetchToolingRecords(soql, label) {
+    try {
+      return await this.fetchAllToolingQueryRecords(soql);
+    } catch (err) {
+      console.warn(`${label} usage scan failed`, err);
+      return [];
+    }
+  }
+
+  async safeFetchToolingSObject(type, id) {
+    try {
+      return await sfConn.rest("/services/data/v" + apiVersion + `/tooling/sobjects/${type}/${id}`);
+    } catch (err) {
+      console.warn(`${type} metadata retrieve failed for ${id}`, err);
+      return null;
+    }
+  }
+
+  async fetchToolingRecordsWithMetadata(type, soql, label, maxRecords = 250) {
+    const records = await this.safeFetchToolingRecords(soql, label);
+    const recordsToHydrate = records.slice(0, maxRecords);
+    const hydrated = [];
+
+    for (const record of recordsToHydrate) {
+      const detail = await this.safeFetchToolingSObject(type, record.Id);
+      hydrated.push(detail ? {...record, ...detail} : record);
+    }
+
+    return hydrated;
+  }
+
+  containsFieldReference(value, terms) {
+    const haystack = typeof value === "string" ? value : JSON.stringify(value || "");
+    const lowerHaystack = haystack.toLowerCase();
+    return terms.some(term => lowerHaystack.includes(term.toLowerCase()));
+  }
+
+  addDependencyItem(map, item) {
+    if (!item || !item.name || !item.type) {
+      return;
+    }
+
+    const key = `${item.type}|${item.id || ""}|${item.name}`;
+    if (!map.has(key)) {
+      map.set(key, item);
+    }
+  }
+
   addFieldRecordToGroups(groups, record) {
     const label = record.Label || record.QualifiedApiName || "";
     if (!label) return null;
@@ -562,6 +625,7 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
       return;
     }
 
+    const dependencyRequestKey = fieldGroup.key;
     this.setState({ isLoadingDependencies: true, fieldDependencies: { dependsOn: [], referencedBy: [] } });
 
     try {
@@ -569,7 +633,9 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
       // FieldDefinition only gives us the DurableId (ObjectName.FieldApiName).
       // So we must first lookup the CustomField IDs before we can query dependencies.
       const customFieldRecords = fieldGroup.records.filter(r => String(r.apiName || "").endsWith("__c"));
-      let validDependencyIds = [];
+      let validDependencyIds = fieldGroup.records
+        .map(r => r.durableId)
+        .filter(Boolean);
 
       if (customFieldRecords.length > 0) {
         // Build DevNames from apiNames (e.g. "Namespace__Field__c" -> "Field" or "Namespace__Field")
@@ -581,7 +647,7 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
         // Chunk custom field lookups to avoid URI limits
         for (let i = 0; i < devNames.length; i += 50) {
           const chunk = devNames.slice(i, i + 50);
-          const devNameList = Array.from(new Set(chunk)).map(n => `'${n}'`).join(",");
+          const devNameList = Array.from(new Set(chunk)).map(n => `'${this.escapeSoqlString(n)}'`).join(",");
           const cfQuery = `SELECT Id FROM CustomField WHERE DeveloperName IN (${devNameList})`;
           const cfResult = await sfConn.rest("/services/data/v" + apiVersion + "/tooling/query?q=" + encodeURIComponent(cfQuery)).catch(() => ({ records: [] }));
 
@@ -591,9 +657,16 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
         }
       }
 
-      // Note: Standard fields do not have tracked dependencies in MetadataComponentDependency.
+      // Include FieldDefinition durable IDs so standard fields can return dependency rows when Salesforce exposes them.
       if (validDependencyIds.length === 0) {
-        this.setState({ fieldDependencies: { dependsOn: [], referencedBy: [] }, isLoadingDependencies: false });
+        const usageReferences = await this.findFieldUsageReferences(fieldGroup);
+        if (this.state.selectedField?.key !== dependencyRequestKey) {
+          return;
+        }
+        this.setState({
+          fieldDependencies: { dependsOn: [], referencedBy: usageReferences },
+          isLoadingDependencies: false,
+        });
         return;
       }
 
@@ -601,7 +674,7 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
       validDependencyIds = Array.from(new Set(validDependencyIds));
 
       const dependsOnPromises = validDependencyIds.map(id => {
-        const query = `SELECT MetadataComponentId, MetadataComponentName, MetadataComponentType, RefMetadataComponentId, RefMetadataComponentName, RefMetadataComponentType, RefMetadataComponentNamespace FROM MetadataComponentDependency WHERE MetadataComponentId = '${id}' ORDER BY MetadataComponentType, RefMetadataComponentType, MetadataComponentName LIMIT 1000`;
+        const query = `SELECT MetadataComponentId, MetadataComponentName, MetadataComponentType, MetadataComponentNamespace, RefMetadataComponentId, RefMetadataComponentName, RefMetadataComponentType, RefMetadataComponentNamespace FROM MetadataComponentDependency WHERE MetadataComponentId = '${this.escapeSoqlString(id)}' ORDER BY MetadataComponentType, RefMetadataComponentType, MetadataComponentName LIMIT 1000`;
         return sfConn.rest("/services/data/v" + apiVersion + "/tooling/query?q=" + encodeURIComponent(query)).catch(e => {
           console.warn(`dependsOn query failed for ${id}`, e);
           return { records: [] };
@@ -609,7 +682,7 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
       });
 
       const referencedByPromises = validDependencyIds.map(id => {
-        const query = `SELECT MetadataComponentId, MetadataComponentName, MetadataComponentType, RefMetadataComponentId, RefMetadataComponentName, RefMetadataComponentType, RefMetadataComponentNamespace FROM MetadataComponentDependency WHERE RefMetadataComponentId = '${id}' ORDER BY MetadataComponentType, RefMetadataComponentType, MetadataComponentName LIMIT 1000`;
+        const query = `SELECT MetadataComponentId, MetadataComponentName, MetadataComponentType, MetadataComponentNamespace, RefMetadataComponentId, RefMetadataComponentName, RefMetadataComponentType, RefMetadataComponentNamespace FROM MetadataComponentDependency WHERE RefMetadataComponentId = '${this.escapeSoqlString(id)}' ORDER BY MetadataComponentType, RefMetadataComponentType, MetadataComponentName LIMIT 1000`;
         return sfConn.rest("/services/data/v" + apiVersion + "/tooling/query?q=" + encodeURIComponent(query)).catch(e => {
           console.warn(`referencedBy query failed for ${id}`, e);
           return { records: [] };
@@ -654,6 +727,13 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
         }
       }
 
+      const usageReferences = await this.findFieldUsageReferences(fieldGroup);
+      usageReferences.forEach(item => this.addDependencyItem(referencedByMap, item));
+
+      if (this.state.selectedField?.key !== dependencyRequestKey) {
+        return;
+      }
+
       this.setState({
         fieldDependencies: {
           dependsOn: Array.from(dependsOnMap.values()),
@@ -663,8 +743,146 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
       });
     } catch (err) {
       console.error("Error fetching field dependencies:", err);
+      if (this.state.selectedField?.key !== dependencyRequestKey) {
+        return;
+      }
       this.setState({ fieldDependencies: { dependsOn: [], referencedBy: [] }, isLoadingDependencies: false });
     }
+  }
+
+  async findFieldUsageReferences(fieldGroup) {
+    const usageMap = new Map();
+    const records = Array.isArray(fieldGroup.records) ? fieldGroup.records : [];
+    const objectNames = Array.from(new Set(records.map(r => r.objectName).filter(Boolean)));
+    const apiNames = Array.from(new Set(records.map(r => r.apiName).filter(Boolean)));
+    const objectList = objectNames.map(name => `'${this.escapeSoqlString(name)}'`).join(",");
+    const fieldTerms = Array.from(new Set([
+      ...apiNames,
+      ...records.map(r => `${r.objectName}.${r.apiName}`).filter(term => !term.includes("undefined")),
+    ])).filter(Boolean);
+
+    if (fieldTerms.length === 0) {
+      return [];
+    }
+
+    const add = item => this.addDependencyItem(usageMap, item);
+
+    if (objectNames.length > 0) {
+      const validationRules = await this.safeFetchToolingRecords(
+        `SELECT Id, ValidationName, Active, ErrorConditionFormula, EntityDefinition.DeveloperName FROM ValidationRule WHERE EntityDefinition.DeveloperName IN (${objectList})`,
+        "ValidationRule"
+      );
+      validationRules
+        .filter(record => this.containsFieldReference(record.ErrorConditionFormula, fieldTerms))
+        .forEach(record => add({
+          id: record.Id,
+          name: `${record.EntityDefinition?.DeveloperName || "Unknown"}.${record.ValidationName}`,
+          type: "ValidationRule",
+        }));
+
+      const layouts = await this.safeFetchToolingRecords(
+        `SELECT Id, Name, TableEnumOrId, Metadata FROM Layout WHERE TableEnumOrId IN (${objectList})`,
+        "Layout"
+      );
+      layouts
+        .filter(record => this.containsFieldReference(record.Metadata || record.Name, fieldTerms))
+        .forEach(record => add({
+          id: record.Id,
+          name: record.Name,
+          type: "Layout",
+        }));
+
+      const fieldSets = await this.safeFetchToolingRecords(
+        `SELECT Id, DeveloperName, Label, EntityDefinition.DeveloperName, Metadata FROM FieldSet WHERE EntityDefinition.DeveloperName IN (${objectList})`,
+        "FieldSet"
+      );
+      fieldSets
+        .filter(record => this.containsFieldReference(record.Metadata, fieldTerms))
+        .forEach(record => add({
+          id: record.Id,
+          name: `${record.EntityDefinition?.DeveloperName || "Unknown"}.${record.DeveloperName || record.Label}`,
+          type: "FieldSet",
+        }));
+
+      const webLinks = await this.safeFetchToolingRecords(
+        `SELECT Id, Name, Url, LinkType, DisplayType, EntityDefinition.DeveloperName FROM WebLink WHERE EntityDefinition.DeveloperName IN (${objectList})`,
+        "WebLink"
+      );
+      webLinks
+        .filter(record => this.containsFieldReference(record, fieldTerms))
+        .forEach(record => add({
+          id: record.Id,
+          name: `${record.EntityDefinition?.DeveloperName || "Unknown"}.${record.Name}`,
+          type: "WebLink",
+        }));
+
+      const customFields = await this.safeFetchToolingRecords(
+        `SELECT Id, DeveloperName, TableEnumOrId, Metadata FROM CustomField WHERE TableEnumOrId IN (${objectList})`,
+        "CustomField"
+      );
+      customFields
+        .filter(record => !apiNames.includes(`${record.DeveloperName}__c`))
+        .filter(record => this.containsFieldReference(record.Metadata, fieldTerms))
+        .forEach(record => add({
+          id: record.Id,
+          name: `${record.TableEnumOrId}.${record.DeveloperName}__c`,
+          type: "CustomField",
+        }));
+    }
+
+    const flows = await this.safeFetchToolingRecords(
+      "SELECT Id, Definition.DeveloperName, VersionNumber, Status, ProcessType, Metadata FROM Flow WHERE Status = 'Active' OR Status = 'Draft'",
+      "Flow"
+    );
+    flows
+      .filter(record => this.containsFieldReference(record.Metadata, fieldTerms))
+      .forEach(record => add({
+        id: record.Id,
+        name: `${record.Definition?.DeveloperName || "Flow"} v${record.VersionNumber || "?"}`,
+        type: record.ProcessType === "Workflow" ? "Process Builder" : "Flow",
+      }));
+
+    const flexiPages = await this.safeFetchToolingRecords(
+      "SELECT Id, DeveloperName, MasterLabel, Metadata FROM FlexiPage",
+      "FlexiPage"
+    );
+    flexiPages
+      .filter(record => this.containsFieldReference(record.Metadata, fieldTerms))
+      .forEach(record => add({
+        id: record.Id,
+        name: record.MasterLabel || record.DeveloperName,
+        type: "FlexiPage",
+      }));
+
+    const quickActions = await this.safeFetchToolingRecords(
+      "SELECT Id, DeveloperName, MasterLabel, TargetObject, Metadata FROM QuickActionDefinition",
+      "QuickActionDefinition"
+    );
+    quickActions
+      .filter(record => this.containsFieldReference(record.Metadata, fieldTerms))
+      .forEach(record => add({
+        id: record.Id,
+        name: record.TargetObject ? `${record.TargetObject}.${record.DeveloperName || record.MasterLabel}` : (record.DeveloperName || record.MasterLabel),
+        type: "QuickAction",
+      }));
+
+    try {
+      const soslTerm = apiNames[0];
+      const sosl = `FIND {${soslTerm}} IN ALL FIELDS RETURNING ApexClass(Id,Name,NamespacePrefix), ApexTrigger(Id,Name,NamespacePrefix), ApexPage(Id,Name,NamespacePrefix), ApexComponent(Id,Name,NamespacePrefix)`;
+      const result = await sfConn.rest("/services/data/v" + apiVersion + "/search/?q=" + encodeURIComponent(sosl));
+      if (Array.isArray(result?.searchRecords)) {
+        result.searchRecords.forEach(record => add({
+          id: record.Id,
+          name: record.Name,
+          type: record.attributes?.type || "Apex",
+          namespace: record.NamespacePrefix,
+        }));
+      }
+    } catch (err) {
+      console.warn("Apex/SOSL usage scan failed", err);
+    }
+
+    return Array.from(usageMap.values());
   }
 
   onKeyDown = (e) => {
@@ -710,14 +928,90 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
       )
       : [];
 
+    const selectedField = {
+      ...fieldGroup,
+      objects,
+    };
+
     this.setState({
-      selectedField: {
-        ...fieldGroup,
-        objects,
-      },
+      selectedField,
       fieldDependencies: { dependsOn: [], referencedBy: [] },
+    }, () => {
+      this.loadFieldDependencies(selectedField);
     });
   };
+
+  groupDependenciesByType(dependencies) {
+    const groups = new Map();
+    const safeDependencies = Array.isArray(dependencies) ? dependencies : [];
+
+    for (const dep of safeDependencies) {
+      const type = dep.type || "Unknown";
+      if (!groups.has(type)) {
+        groups.set(type, []);
+      }
+      groups.get(type).push(dep);
+    }
+
+    return Array.from(groups.entries())
+      .map(([type, items]) => ({
+        type,
+        items: items.sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""))),
+      }))
+      .sort((a, b) => a.type.localeCompare(b.type));
+  }
+
+  renderDependencyGroups(title, dependencies, emptyText) {
+    const safeDependencies = Array.isArray(dependencies) ? dependencies : [];
+    const groups = this.groupDependenciesByType(safeDependencies);
+
+    return React.createElement(
+      "div",
+      { className: "schema-explorer-dependency-block" },
+      React.createElement(
+        "div",
+        { className: "schema-explorer-dependency-heading" },
+        React.createElement("span", null, title),
+        React.createElement("span", { className: "schema-explorer-dependency-count" }, safeDependencies.length)
+      ),
+      groups.length === 0
+        ? React.createElement("div", { className: "schema-explorer-reference-empty" }, emptyText)
+        : groups.map((group) =>
+          React.createElement(
+            "details",
+            { key: group.type, className: "schema-explorer-dependency-group", open: true },
+            React.createElement(
+              "summary",
+              { className: "schema-explorer-dependency-summary" },
+              React.createElement("span", null, group.type),
+              React.createElement("span", { className: "schema-explorer-dependency-count" }, group.items.length)
+            ),
+            React.createElement(
+              "div",
+              { className: "schema-explorer-reference-table" },
+              group.items.map((dep, index) =>
+                React.createElement(
+                  "div",
+                  { key: `${dep.type}-${dep.id || dep.name}-${index}`, className: "schema-explorer-reference-row" },
+                  React.createElement("span", { className: "schema-explorer-reference-name" }, dep.name || "(Unnamed)"),
+                  dep.namespace
+                    ? React.createElement("span", { className: "schema-explorer-reference-meta" }, dep.namespace)
+                    : null
+                )
+              )
+            )
+          )
+        )
+    );
+  }
+
+  renderFieldDetailsEmpty() {
+    return React.createElement(
+      "div",
+      { className: "schema-explorer-field-details schema-explorer-field-details--empty" },
+      "Select a field to see details, dependencies, and used by."
+    );
+  }
 
   openFieldInSetup = (fieldGroup) => {
     if (!fieldGroup || !Array.isArray(fieldGroup.records) || fieldGroup.records.length === 0) {
@@ -913,7 +1207,6 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
   renderFieldResultItem(fieldGroup) {
     const { selectedField } = this.state;
     const isExpanded = selectedField?.key === fieldGroup.key;
-    const displayFieldGroup = isExpanded ? selectedField : fieldGroup;
 
     return React.createElement(
       "div",
@@ -921,7 +1214,7 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
         key: fieldGroup.key,
         className:
           "schema-explorer-field-item schema-explorer-field-item--drilldown"
-          + (isExpanded ? " schema-explorer-field-item--expanded" : ""),
+          + (isExpanded ? " schema-explorer-field-item--expanded schema-explorer-field-item--selected" : ""),
         onClick: (e) => {
           e.preventDefault();
           e.stopPropagation();
@@ -943,8 +1236,19 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
         { className: "schema-explorer-field-label" },
         `${fieldGroup.apiNames.length === 1 ? fieldGroup.apiNames[0] : fieldGroup.apiNames.join(", ")} - ${fieldGroup.objectCount} ${fieldGroup.objectCount === 1 ? "object" : "objects"}`
       ),
-      React.createElement("span", { className: "schema-explorer-field-type" }, fieldGroup.dataType || "CustomField"),
-      isExpanded ? this.renderFieldObjectsPanel(displayFieldGroup) : null
+      React.createElement("span", { className: "schema-explorer-field-type" }, fieldGroup.dataType || "CustomField")
+    );
+  }
+
+  renderFieldResultEntry(fieldGroup) {
+    const { selectedField } = this.state;
+    const isExpanded = selectedField?.key === fieldGroup.key;
+
+    return React.createElement(
+      "div",
+      { key: fieldGroup.key, className: "schema-explorer-field-result-entry" },
+      this.renderFieldResultItem(fieldGroup),
+      isExpanded ? this.renderFieldDetails(selectedField) : null
     );
   }
 
@@ -954,7 +1258,7 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
 
     return React.createElement(
       "div",
-      { className: "schema-explorer-fields-view" },
+      { className: "schema-explorer-fields-view schema-explorer-fields-view--inline-details" },
       fieldSearchError
         ? React.createElement(
           "div",
@@ -979,7 +1283,7 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
                 ? "No fields found matching your search"
                 : "Enter 2+ characters to search fields"
             )
-            : safeFieldResults.map((fieldGroup) => this.renderFieldResultItem(fieldGroup))
+            : safeFieldResults.map((fieldGroup) => this.renderFieldResultEntry(fieldGroup))
       )
     );
   }
@@ -1088,11 +1392,21 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
         React.createElement(
           "div",
           { className: "schema-explorer-detail-section" },
-          React.createElement("div", { className: "schema-explorer-detail-label" }, "Field details"),
-          React.createElement("div", { className: "schema-explorer-detail-value" }, `Field Label: ${fieldGroup.label}`),
-          React.createElement("div", { className: "schema-explorer-detail-value" }, `API Name(s): ${fieldGroup.apiNames.join(", ")}`),
-          React.createElement("div", { className: "schema-explorer-detail-value" }, `Type: ${fieldGroup.dataType || "Unknown"}`),
-          React.createElement("div", { className: "schema-explorer-detail-value" }, `Objects: ${fieldGroup.objectCount}`)
+          React.createElement("div", { className: "schema-explorer-detail-label" }, "Details"),
+          React.createElement("div", { className: "schema-explorer-detail-grid" },
+            React.createElement("div", { className: "schema-explorer-detail-value" },
+              React.createElement("span", null, "API Name"),
+              React.createElement("strong", null, fieldGroup.apiNames.join(", "))
+            ),
+            React.createElement("div", { className: "schema-explorer-detail-value" },
+              React.createElement("span", null, "Type"),
+              React.createElement("strong", null, fieldGroup.dataType || "Unknown")
+            ),
+            React.createElement("div", { className: "schema-explorer-detail-value" },
+              React.createElement("span", null, "Objects"),
+              React.createElement("strong", null, fieldGroup.objectCount)
+            )
+          )
         ),
         React.createElement(
           "div",
@@ -1101,36 +1415,10 @@ class AllDataBoxSchemaExplorer extends React.PureComponent {
           isLoadingDependencies
             ? React.createElement("div", { className: "schema-explorer-empty-state slds-text-align_center" }, "Loading dependencies...")
             : React.createElement(
-              React.Fragment,
-              null,
-              React.createElement(
-                "div",
-                { className: "schema-explorer-references-list" },
-                React.createElement("div", { className: "schema-explorer-detail-value" }, "Field depends on:"),
-                fieldDependencies.dependsOn.length === 0
-                  ? React.createElement("div", { className: "schema-explorer-reference-item" }, "No upstream dependencies found")
-                  : fieldDependencies.dependsOn.map((dep, index) =>
-                    React.createElement(
-                      "div",
-                      { key: `${dep.type}-${dep.id}-${index}`, className: "schema-explorer-reference-item" },
-                      `${dep.type}: ${dep.name}${dep.namespace ? ` (${dep.namespace})` : ""}`
-                    )
-                  )
-              ),
-              React.createElement(
-                "div",
-                { className: "schema-explorer-references-list" },
-                React.createElement("div", { className: "schema-explorer-detail-value" }, "Referenced by:"),
-                fieldDependencies.referencedBy.length === 0
-                  ? React.createElement("div", { className: "schema-explorer-reference-item" }, "No downstream references found")
-                  : fieldDependencies.referencedBy.map((dep, index) =>
-                    React.createElement(
-                      "div",
-                      { key: `${dep.type}-${dep.id}-${index}`, className: "schema-explorer-reference-item" },
-                      `${dep.type}: ${dep.name}${dep.namespace ? ` (${dep.namespace})` : ""}`
-                    )
-                  )
-              )
+              "div",
+              { className: "schema-explorer-dependency-sections" },
+              this.renderDependencyGroups("Dependencies", fieldDependencies.dependsOn, "No dependencies found"),
+              this.renderDependencyGroups("Used By", fieldDependencies.referencedBy, "No used by references found")
             )
         )
       )
