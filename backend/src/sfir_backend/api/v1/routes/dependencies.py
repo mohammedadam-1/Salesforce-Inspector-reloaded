@@ -1,137 +1,117 @@
-"""Dependency graph API endpoints."""
+from __future__ import annotations
 
 import uuid
+from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, Depends, Query
 
-from sfir_backend.api.deps import get_current_user, get_db
-from sfir_backend.services.dependency_graph.graph_service import (
-    DependencyGraphService,
-    TraversalDirection,
+from sfir_backend.api.deps import (
+    get_current_org_id,
+    get_current_user_id,
+    get_graph_service,
+    get_rbac_service,
 )
+from sfir_backend.application.use_cases.graph.service import GraphService
+from sfir_backend.application.use_cases.rbac import RBACUseCase
 
 router = APIRouter(prefix="/dependencies", tags=["Dependencies"])
 
 
-@router.get("/upstream")
-async def get_upstream_dependencies(
-    organization_id: uuid.UUID,
-    component_key: str = Query(..., description="Component key in format 'Type:Name', e.g. 'CustomField:Account.Industry'"),
-    max_depth: int = Query(default=5, ge=1, le=20),
-    use_cache: bool = Query(default=True),
-    db: AsyncSession = Depends(get_db),
-    user=Depends(get_current_user),
-):
-    """Get everything that depends on the given component.
-
-    "What uses this field?" — finds all components that reference the given key.
-    """
-    service = DependencyGraphService(db)
-    if use_cache:
-        result = await service.get_or_create_snapshot(
-            organization_id=organization_id,
-            root_key=component_key,
-            direction=TraversalDirection.UPSTREAM,
-            max_depth=max_depth,
+@router.get("")
+async def list_dependencies(
+    component_type: str | None = Query(default=None),
+    component_name: str | None = Query(default=None),
+    depth: int = Query(default=1, ge=1, le=5),
+    org_id: uuid.UUID | None = Depends(get_current_org_id),
+    _user_id: uuid.UUID = Depends(get_current_user_id),
+    _rbac: RBACUseCase = Depends(get_rbac_service),
+    graph_service: GraphService = Depends(get_graph_service),
+) -> dict[str, Any]:
+    if not org_id:
+        return {"error": "Organization context required"}
+    graph = await graph_service.build_graph(org_id)
+    if component_type and component_name:
+        result = await graph_service.get_node_dependencies(
+            graph, component_type, component_name, depth,
         )
-        return {
-            "component_key": component_key,
-            "direction": "upstream",
-            "items": result["payload"]["results"],
-            "total": result["payload"]["total"],
-            "cached": result["cached"],
-            "generated_at": result["generated_at"],
-        }
-    else:
-        results = await service.get_upstream_dependencies(
-            organization_id, component_key, max_depth
-        )
-        return {
-            "component_key": component_key,
-            "direction": "upstream",
-            "items": results,
-            "total": len(results),
-            "cached": False,
-        }
+        return {"dependencies": result, "source": f"{component_type}/{component_name}"}
+    return {"dependencies": [], "total": graph.edge_count}
 
 
-@router.get("/downstream")
-async def get_downstream_dependencies(
-    organization_id: uuid.UUID,
-    component_key: str = Query(..., description="Component key in format 'Type:Name'"),
-    max_depth: int = Query(default=5, ge=1, le=20),
-    db: AsyncSession = Depends(get_db),
-    user=Depends(get_current_user),
-):
-    """Get everything that the given component depends on.
-
-    "What does this use?" — finds all components referenced by the given key.
-    """
-    service = DependencyGraphService(db)
-    results = await service.get_downstream_dependencies(
-        organization_id, component_key, max_depth
-    )
-    return {
-        "component_key": component_key,
-        "direction": "downstream",
-        "items": results,
-        "total": len(results),
-    }
-
-
-@router.post("/analyze")
-async def analyze_change_impact(
-    organization_id: uuid.UUID,
-    component_key: str = Query(..., description="Component to analyze"),
-    change_description: str = Query(default="Modified component"),
-    max_depth: int = Query(default=10, ge=1, le=20),
-    db: AsyncSession = Depends(get_db),
-    user=Depends(get_current_user),
-):
-    """Analyze the impact of changing a metadata component."""
-    service = DependencyGraphService(db)
-    result = await service.analyze_change_impact(
-        organization_id, component_key, change_description, max_depth
+@router.get("/{component_type}/{component_name}")
+async def get_component_dependencies(
+    component_type: str,
+    component_name: str,
+    depth: int = Query(default=1, ge=1, le=5),
+    org_id: uuid.UUID | None = Depends(get_current_org_id),
+    _user_id: uuid.UUID = Depends(get_current_user_id),
+    _rbac: RBACUseCase = Depends(get_rbac_service),
+    graph_service: GraphService = Depends(get_graph_service),
+) -> dict[str, Any]:
+    if not org_id:
+        return {"error": "Organization context required"}
+    graph = await graph_service.build_graph(org_id)
+    result = await graph_service.get_node_dependencies(
+        graph, component_type, component_name, depth,
     )
     return result
 
 
-@router.get("/path")
-async def find_path(
-    organization_id: uuid.UUID,
-    source: str = Query(..., description="Source component key"),
-    target: str = Query(..., description="Target component key"),
-    db: AsyncSession = Depends(get_db),
-    user=Depends(get_current_user),
-):
-    """Find the shortest dependency path between two components."""
-    service = DependencyGraphService(db)
-    path = await service.find_path(organization_id, source, target)
-    return {
-        "source": source,
-        "target": target,
-        "path": path,
-        "hops": len(path),
-    }
+@router.get("/{component_type}/{component_name}/tree")
+async def get_dependency_tree(
+    component_type: str,
+    component_name: str,
+    depth: int = Query(default=3, ge=1, le=10),
+    org_id: uuid.UUID | None = Depends(get_current_org_id),
+    _user_id: uuid.UUID = Depends(get_current_user_id),
+    _rbac: RBACUseCase = Depends(get_rbac_service),
+    graph_service: GraphService = Depends(get_graph_service),
+) -> dict[str, Any]:
+    if not org_id:
+        return {"error": "Organization context required"}
+    graph = await graph_service.build_graph(org_id)
+    result = await graph_service.get_node_dependencies(
+        graph, component_type, component_name, depth,
+    )
+    return {"tree": result, "max_depth": depth}
 
 
-@router.post("/shared")
-async def find_shared_dependencies(
-    organization_id: uuid.UUID,
-    component_keys: list[str] = Query(
-        ..., description="List of component keys", min_length=2
-    ),
-    db: AsyncSession = Depends(get_db),
-    user=Depends(get_current_user),
-):
-    """Find common dependencies shared by multiple components."""
-    service = DependencyGraphService(db)
-    shared = await service.find_shared_dependencies(
-        organization_id, component_keys
+@router.get("/{component_type}/{component_name}/reverse")
+async def get_reverse_dependencies(
+    component_type: str,
+    component_name: str,
+    org_id: uuid.UUID | None = Depends(get_current_org_id),
+    _user_id: uuid.UUID = Depends(get_current_user_id),
+    _rbac: RBACUseCase = Depends(get_rbac_service),
+    graph_service: GraphService = Depends(get_graph_service),
+) -> dict[str, Any]:
+    if not org_id:
+        return {"error": "Organization context required"}
+    graph = await graph_service.build_graph(org_id)
+    impacted = await graph_service.find_impact(
+        graph, component_type, component_name, 1,
+    )
+    return {"reverse_dependencies": impacted, "count": len(impacted)}
+
+
+@router.get("/{component_type}/{component_name}/graph")
+async def get_dependency_graph(
+    component_type: str,
+    component_name: str,
+    depth: int = Query(default=2, ge=1, le=5),
+    org_id: uuid.UUID | None = Depends(get_current_org_id),
+    _user_id: uuid.UUID = Depends(get_current_user_id),
+    _rbac: RBACUseCase = Depends(get_rbac_service),
+    graph_service: GraphService = Depends(get_graph_service),
+) -> dict[str, Any]:
+    if not org_id:
+        return {"error": "Organization context required"}
+    graph = await graph_service.build_graph(org_id)
+    deps = await graph_service.get_node_dependencies(
+        graph, component_type, component_name, depth,
     )
     return {
-        "component_keys": component_keys,
-        "shared_count": len(shared),
-        "shared_dependencies": shared,
+        "nodes": graph.node_count,
+        "edges": graph.edge_count,
+        "dependencies": deps,
     }

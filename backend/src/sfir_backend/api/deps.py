@@ -1,134 +1,118 @@
-"""FastAPI dependency injection.
-
-Provides reusable dependencies for:
-- Database sessions
-- Current authenticated user
-- Organization context
-- Permission checks
-- Rate limiting
-"""
-
 import uuid
 from collections.abc import AsyncIterator
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, Header, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sfir_backend.config.settings import get_settings
-from sfir_backend.infrastructure.database.session import get_async_session
-from sfir_backend.infrastructure.cache.redis import get_redis
+from sfir_backend.application.use_cases.ai.agent import AgentService
+from sfir_backend.application.use_cases.ai.orchestrator import AIOrchestrator
+from sfir_backend.application.use_cases.auth import AuthUseCase
+from sfir_backend.application.use_cases.graph.service import GraphService
+from sfir_backend.application.use_cases.metadata_sync import SyncCoordinator
+from sfir_backend.application.use_cases.organization import OrganizationUseCase
+from sfir_backend.application.use_cases.rbac import RBACUseCase
+from sfir_backend.application.use_cases.salesforce import SalesforceUseCase
+from sfir_backend.config.container import Container
+from sfir_backend.infrastructure.jobs.engine import JobEngine
+from sfir_backend.infrastructure.security.jwt import JWTService
+from sfir_backend.shared.exceptions.application import (
+    AuthenticationFailedError,
+)
+from sfir_backend.shared.middleware.tenant_context import current_org_id
 
-settings = get_settings()
+
+async def get_container(request: Request) -> Container:
+    return request.app.state.container
 
 
-async def get_db() -> AsyncIterator[AsyncSession]:
-    async for session in get_async_session():
+async def get_db(
+    container: Container = Depends(get_container),
+) -> AsyncIterator[AsyncSession]:
+    session = container.create_session()
+    try:
         yield session
+    finally:
+        await session.close()
 
 
-async def get_current_user(request: Request, db: AsyncSession = Depends(get_db)):
-    """Extract and validate the current user from JWT token."""
-    auth_header = request.headers.get("Authorization")
-    if not auth_header or not auth_header.startswith("Bearer "):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing or invalid Authorization header",
-        )
-    token = auth_header.removeprefix("Bearer ")
+async def get_jwt_service(
+    container: Container = Depends(get_container),
+) -> JWTService:
+    return container.get_service("jwt")
+
+
+async def get_current_user_id(
+    authorization: str | None = Header(default=None),
+    container: Container = Depends(get_container),
+) -> uuid.UUID:
+    if not authorization:
+        raise AuthenticationFailedError("Missing authorization header")
+
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer":
+        raise AuthenticationFailedError("Invalid authorization scheme")
+
+    jwt_service: JWTService = container.get_service("jwt")
     try:
-        from sfir_backend.infrastructure.security.jwt import decode_access_token
-
-        payload = decode_access_token(token)
-        user_id = payload.get("sub")
-        if not user_id:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token payload",
-            )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(e),
-        )
-
-    from sfir_backend.repositories.user import UserRepository
-
-    repo = UserRepository(db)
-    user = await repo.get_by_id(uuid.UUID(user_id))
-    if not user or not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found or inactive",
-        )
-
-    request.state.current_user = user
-    return user
+        payload = jwt_service.decode_access_token(token)
+        return uuid.UUID(payload["sub"])
+    except (ValueError, KeyError):
+        raise AuthenticationFailedError("Invalid or expired token") from None
 
 
-async def get_current_org_id(request: Request) -> uuid.UUID:
-    """Extract the current organization ID from request headers or path."""
-    org_id = request.headers.get("X-Organization-ID")
-    if not org_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="X-Organization-ID header is required",
-        )
-    try:
-        return uuid.UUID(org_id)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid X-Organization-ID format",
-        )
+async def get_current_org_id() -> uuid.UUID | None:
+    return current_org_id.get()
 
 
-async def require_permission(permission_code: str):
-    """Dependency factory for permission-based access control."""
-
-    async def _check_permission(
-        request: Request,
-        db: AsyncSession = Depends(get_db),
-        user=Depends(get_current_user),
-    ) -> bool:
-        if settings.is_development:
-            return True
-        from sfir_backend.repositories.user import UserRepository
-        repo = UserRepository(db)
-        has_perm = await repo.has_permission(user.id, permission_code)
-        if not has_perm:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Missing required permission: {permission_code}",
-            )
-        return True
-
-    return _check_permission
+async def get_auth_service(
+    container: Container = Depends(get_container),
+) -> AuthUseCase:
+    return container.get_use_case("auth")
 
 
-async def get_from_api_key(request: Request, db: AsyncSession = Depends(get_db)):
-    """Authenticate via API key (X-API-Key header)."""
-    api_key = request.headers.get("X-API-Key")
-    if not api_key:
-        return None
+async def get_org_service(
+    container: Container = Depends(get_container),
+) -> OrganizationUseCase:
+    return container.get_use_case("organization")
 
-    from sfir_backend.infrastructure.security.jwt import hash_api_key
-    from sfir_backend.repositories.api_key import ApiKeyRepository
 
-    repo = ApiKeyRepository(db)
-    key_hash = hash_api_key(api_key)
-    key = await repo.get_by_key_hash(key_hash)
-    if not key or key.revoked_at is not None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or revoked API key",
-        )
-    if key.expires_at and key.expires_at < __import__("datetime").datetime.now(
-        __import__("datetime").timezone.utc
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="API key has expired",
-        )
+async def get_rbac_service(
+    container: Container = Depends(get_container),
+) -> RBACUseCase:
+    return container.get_use_case("rbac")
 
-    await repo.update_last_used(key.id)
-    return key
+
+async def get_salesforce_service(
+    container: Container = Depends(get_container),
+) -> SalesforceUseCase:
+    return container.get_use_case("salesforce")
+
+
+async def get_sync_coordinator(
+    container: Container = Depends(get_container),
+) -> SyncCoordinator:
+    return container.get_use_case("sync_coordinator")
+
+
+async def get_graph_service(
+    container: Container = Depends(get_container),
+) -> GraphService:
+    return container.get_use_case("graph_service")
+
+
+async def get_agent_service(
+    container: Container = Depends(get_container),
+) -> AgentService:
+    return container.get_use_case("agent_service")
+
+
+async def get_ai_orchestrator(
+    container: Container = Depends(get_container),
+) -> AIOrchestrator:
+    return container.get_use_case("ai_orchestrator")
+
+
+async def get_job_engine(
+    container: Container = Depends(get_container),
+) -> JobEngine:
+    return container.get_service("job_engine")

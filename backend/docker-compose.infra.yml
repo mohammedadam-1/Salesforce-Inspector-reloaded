@@ -1,3 +1,8 @@
+# ────────────────────────────────────────────────────────────
+# SFIR Backend — Infrastructure Services
+# PostgreSQL, Redis, and Observability stack
+# ────────────────────────────────────────────────────────────
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -10,12 +15,13 @@ services:
       POSTGRES_PASSWORD: sfir
       POSTGRES_DB: sfir
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U sfir"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
       retries: 5
+      start_period: 10s
     networks:
       - sfir-network
 
@@ -26,72 +32,79 @@ services:
     ports:
       - "6379:6379"
     volumes:
-      - redis-data:/data
+      - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
+      interval: 5s
+      timeout: 3s
       retries: 5
+      start_period: 5s
     networks:
       - sfir-network
 
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.110.0
+    image: otel/opentelemetry-collector-contrib:latest
     container_name: sfir-otel-collector
     restart: unless-stopped
     ports:
-      - "4317:4317"
-      - "4318:4318"
-      - "8888:8888"
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
     volumes:
       - ./docker/otel-collector.yml:/etc/otel-collector.yml:ro
     command: ["--config", "/etc/otel-collector.yml"]
+    depends_on:
+      - prometheus
     networks:
       - sfir-network
+    profiles:
+      - full
 
   prometheus:
-    image: prom/prometheus:v2.54.0
+    image: prom/prometheus:latest
     container_name: sfir-prometheus
     restart: unless-stopped
     ports:
       - "9090:9090"
     volumes:
       - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus-data:/prometheus
+      - prometheus_data:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
-      - "--storage.tsdb.retention.time=30d"
     networks:
       - sfir-network
+    profiles:
+      - full
 
   grafana:
-    image: grafana/grafana:11.1.0
+    image: grafana/grafana:latest
     container_name: sfir-grafana
     restart: unless-stopped
     ports:
       - "3000:3000"
-    environment:
-      GF_SECURITY_ADMIN_PASSWORD: sfir-admin
-      GF_INSTALL_PLUGINS: ""
     volumes:
       - ./docker/grafana/datasources:/etc/grafana/provisioning/datasources:ro
-      - ./docker/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
-      - grafana-data:/var/lib/grafana
+      - grafana_data:/var/lib/grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    depends_on:
+      - prometheus
     networks:
       - sfir-network
+    profiles:
+      - full
 
 volumes:
-  postgres-data:
+  postgres_data:
     name: sfir-postgres-data
-  redis-data:
+  redis_data:
     name: sfir-redis-data
-  prometheus-data:
+  prometheus_data:
     name: sfir-prometheus-data
-  grafana-data:
+  grafana_data:
     name: sfir-grafana-data
 
 networks:
   sfir-network:
     name: sfir-network
-    external: true
+    driver: bridge

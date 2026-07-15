@@ -6,51 +6,25 @@ receivers:
       http:
         endpoint: 0.0.0.0:4318
 
-exporters:
-  otlp:
-    endpoint: "jaeger:4317"
-    tls:
-      insecure: true
-
-  prometheus:
-    endpoint: "0.0.0.0:8889"
-    namespace: "sfir"
-    resource_to_telemetry_conversion:
-      enabled: true
-
-  debug:
-    verbosity: detailed
-    sampling_initial: 5
-    sampling_thereafter: 100
-
 processors:
   batch:
     timeout: 1s
     send_batch_size: 1024
-    send_batch_max_size: 2048
 
-  memory_limiter:
-    check_interval: 1s
-    limit_mib: 512
-    spike_limit_mib: 128
-
-  attributes:
-    actions:
-      - key: environment
-        value: "${SFIR_ENVIRONMENT}"
-        action: upsert
+exporters:
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+    namespace: "sfir"
+  logging:
+    loglevel: debug
 
 service:
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [memory_limiter, batch]
-      exporters: [otlp, debug]
+      processors: [batch]
+      exporters: [logging]
     metrics:
       receivers: [otlp]
-      processors: [memory_limiter, batch]
-      exporters: [prometheus, debug]
-    logs:
-      receivers: [otlp]
-      processors: [memory_limiter, batch]
-      exporters: [debug]
+      processors: [batch]
+      exporters: [prometheus, logging]

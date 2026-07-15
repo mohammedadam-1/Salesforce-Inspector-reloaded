@@ -1,120 +1,65 @@
-"""Authentication endpoints."""
-
 import uuid
 
-import structlog
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, Depends, Request
 
-from sfir_backend.api.deps import get_current_user, get_db
-from sfir_backend.config.settings import get_settings
-from sfir_backend.schemas.auth import (
-    ErrorResponse,
+from sfir_backend.api.deps import (
+    get_auth_service,
+    get_current_org_id,
+    get_current_user_id,
+)
+from sfir_backend.application.dto.auth import (
+    CurrentUserResponse,
     LoginRequest,
     LoginResponse,
+    RefreshTokenRequest,
+    RefreshTokenResponse,
     RegisterRequest,
-    TokenRefreshRequest,
-    TokenRefreshResponse,
-    UserResponse,
 )
-from sfir_backend.services.auth.auth_service import AuthService, AuthenticationError
+from sfir_backend.application.use_cases.auth import AuthUseCase
 
-logger = structlog.get_logger(__name__)
-router = APIRouter(prefix="/auth", tags=["Authentication"])
-settings = get_settings()
+router = APIRouter(tags=["Authentication"])
 
 
-@router.post(
-    "/login",
-    response_model=LoginResponse,
-    responses={401: {"model": ErrorResponse}},
-)
-async def login(
-    request: LoginRequest,
-    db: AsyncSession = Depends(get_db),
-):
-    """Authenticate a user with email and password."""
-    service = AuthService(db)
-    try:
-        org_id = uuid.UUID(request.organization_id) if request.organization_id else None
-        access_token, refresh_token, user = await service.login(
-            email=request.email,
-            password=request.password,
-            organization_id=org_id,
-        )
-        return LoginResponse(
-            access_token=access_token,
-            refresh_token=refresh_token,
-            expires_in=settings.jwt_access_token_expire_minutes * 60,
-            user=UserResponse.model_validate(user),
-        )
-    except AuthenticationError as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"code": "AUTH_ERROR", "message": str(e)},
-        )
-
-
-@router.post(
-    "/refresh",
-    response_model=TokenRefreshResponse,
-    responses={401: {"model": ErrorResponse}},
-)
-async def refresh_token(
-    request: TokenRefreshRequest,
-    db: AsyncSession = Depends(get_db),
-):
-    """Refresh an access token."""
-    service = AuthService(db)
-    try:
-        access_token, new_refresh = await service.refresh_token(
-            request.refresh_token
-        )
-        return TokenRefreshResponse(
-            access_token=access_token,
-            refresh_token=new_refresh,
-            expires_in=settings.jwt_access_token_expire_minutes * 60,
-        )
-    except (AuthenticationError, ValueError) as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"code": "TOKEN_ERROR", "message": str(e)},
-        )
-
-
-@router.post(
-    "/register",
-    response_model=UserResponse,
-    status_code=status.HTTP_201_CREATED,
-    responses={409: {"model": ErrorResponse}},
-)
+@router.post("/auth/register")
 async def register(
     request: RegisterRequest,
-    db: AsyncSession = Depends(get_db),
-):
-    """Register a new user account."""
-    service = AuthService(db)
-    try:
-        user = await service.register(
-            email=request.email,
-            display_name=request.display_name,
-            password=request.password,
-        )
-        return UserResponse.model_validate(user)
-    except AuthenticationError as e:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "REGISTRATION_ERROR", "message": str(e)},
-        )
+    auth: AuthUseCase = Depends(get_auth_service),
+) -> LoginResponse:
+    return await auth.register(request)
 
 
-@router.get(
-    "/me",
-    response_model=UserResponse,
-)
-async def get_current_user_info(
-    db: AsyncSession = Depends(get_db),
-    user=Depends(get_current_user),
-):
-    """Get the current authenticated user's information."""
-    return UserResponse.model_validate(user)
+@router.post("/auth/login")
+async def login(
+    request: LoginRequest,
+    http_request: Request,
+    auth: AuthUseCase = Depends(get_auth_service),
+) -> LoginResponse:
+    request.ip_address = http_request.client.host if http_request.client else ""
+    request.user_agent = http_request.headers.get("user-agent", "")
+    return await auth.login(request)
+
+
+@router.post("/auth/logout")
+async def logout(
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    auth: AuthUseCase = Depends(get_auth_service),
+) -> dict[str, str]:
+    await auth.logout(user_id)
+    return {"message": "Logged out successfully"}
+
+
+@router.post("/auth/refresh")
+async def refresh(
+    request: RefreshTokenRequest,
+    auth: AuthUseCase = Depends(get_auth_service),
+) -> RefreshTokenResponse:
+    return await auth.refresh(request)
+
+
+@router.get("/auth/me")
+async def get_current_user(
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    org_id: uuid.UUID | None = Depends(get_current_org_id),
+    auth: AuthUseCase = Depends(get_auth_service),
+) -> CurrentUserResponse:
+    return await auth.get_current_user(user_id, org_id)

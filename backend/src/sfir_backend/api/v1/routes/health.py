@@ -1,60 +1,83 @@
-"""Health check endpoints for liveness, readiness, and metrics."""
+import datetime
 
-import time
-
-import structlog
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from sfir_backend.api.deps import get_db
-from sfir_backend.config.settings import get_settings
+from sfir_backend.config.container import Container
 
-logger = structlog.get_logger(__name__)
-router = APIRouter(tags=["health"])
-
-_startup_time = time.time()
+router = APIRouter(tags=["Health"])
 
 
 @router.get("/health/live")
-async def liveness() -> dict:
-    """Liveness probe — process is alive."""
-    return {
-        "status": "ok",
-        "service": "sfir-backend",
-        "timestamp": time.time(),
-        "uptime_seconds": time.time() - _startup_time,
-    }
+async def liveness() -> dict[str, str]:
+    """Liveness probe for Kubernetes.
+
+    Returns 200 if the process is alive.
+    """
+    return {"status": "healthy", "timestamp": datetime.datetime.now(datetime.UTC).isoformat()}
 
 
 @router.get("/health/ready")
-async def readiness(db: AsyncSession = Depends(get_db)) -> dict:
-    """Readiness probe — service can accept traffic."""
-    checks = {
-        "database": False,
-        "redis": False,
-    }
-    status_code = 200
+async def readiness(request: Request) -> JSONResponse:
+    """Readiness probe.
+
+    Checks that the application can serve traffic by
+    verifying database connectivity.
+    """
+    checks: dict[str, str] = {}
+    all_ready = True
 
     try:
-        await db.execute(text("SELECT 1"))
-        checks["database"] = True
-    except Exception as e:
-        logger.error("readiness_db_failed", error=str(e))
-        status_code = 503
+        container: Container = request.app.state.container
+    except (AttributeError, KeyError):
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "not_ready",
+                "checks": {"application": "not_initialized"},
+            },
+        )
 
-    try:
-        from sfir_backend.infrastructure.cache.redis import get_redis
-        redis = get_redis()
-        await redis.ping()
-        checks["redis"] = True
-    except Exception as e:
-        logger.error("readiness_redis_failed", error=str(e))
-        status_code = 503
+    if container.engine:
+        try:
+            import asyncio
 
+            session = container.create_session()
+            try:
+                async with asyncio.timeout(3):
+                    await session.execute(text("SELECT 1"))
+                checks["database"] = "ok"
+            except TimeoutError:
+                checks["database"] = "timeout"
+                all_ready = False
+            except Exception:
+                checks["database"] = "failed"
+                all_ready = False
+            finally:
+                await session.close()
+        except Exception:
+            checks["database"] = "unavailable"
+            all_ready = False
+    else:
+        checks["database"] = "not_configured"
+
+    status_code = 200 if all_ready else 503
+
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "status": "ready" if all_ready else "not_ready",
+            "checks": checks,
+        },
+    )
+
+
+@router.get("/health/status")
+async def detailed_status() -> dict[str, object]:
+    """Detailed health status with system information."""
     return {
-        "status": "ok" if all(checks.values()) else "degraded",
-        "checks": checks,
-        "uptime_seconds": time.time() - _startup_time,
-        "environment": get_settings().environment,
+        "service": "sfir-backend",
+        "version": "0.1.0",
+        "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
     }
