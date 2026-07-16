@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections import deque
-from typing import Any
 
 from sfir_backend.domain.impact.models import (
     AffectedComponent,
@@ -33,9 +32,7 @@ class DependencyImpactAnalyzer:
         if component_key not in graph.nodes:
             return [], []
 
-        node = graph.get_node(component_key)
-        base_type = node.node_type.value if node and node.node_type else "unknown"
-        base_name = node.api_name if node else ""
+        graph.get_node(component_key)
 
         queue: deque[tuple[str, str, int, list[str]]] = deque()
         queue.append((component_key, "", 0, [component_key]))
@@ -53,9 +50,7 @@ class DependencyImpactAnalyzer:
                     ctype = current_node.node_type.value if current_node.node_type else "unknown"
                     cname = current_node.api_name
 
-                if include_types and ctype not in include_types:
-                    pass
-                elif exclude_types and ctype in exclude_types:
+                if (include_types and ctype not in include_types) or (exclude_types and ctype in exclude_types):
                     pass
                 else:
                     severity = self._determine_severity(depth, change_type)
@@ -84,7 +79,7 @@ class DependencyImpactAnalyzer:
                         neighbor,
                         edge.edge_type.value if edge.edge_type else "",
                         depth + 1,
-                        path + [neighbor],
+                        [*path, neighbor],
                     ))
 
             for edge in graph.get_incoming_edges(current):
@@ -95,7 +90,7 @@ class DependencyImpactAnalyzer:
                         neighbor,
                         edge.edge_type.value if edge.edge_type else "",
                         depth + 1,
-                        path + [neighbor],
+                        [*path, neighbor],
                     ))
 
         return affected, paths

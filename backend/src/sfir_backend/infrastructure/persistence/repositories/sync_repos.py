@@ -223,8 +223,29 @@ class MetadataVersionRepository(IMetadataVersionRepository):
         return version
 
     async def save_many(self, versions: list[MetadataVersion]) -> list[MetadataVersion]:
+        if not versions:
+            return versions
+        models = []
         for v in versions:
-            await self.save(v)
+            model = MetadataVersionModel(
+                id=v.id,
+                organization_id=v.organization_id,
+                sync_job_id=v.sync_job_id,
+                component_type=v.component_type,
+                component_name=v.component_name,
+                component_id=v.component_id,
+                hash=v.hash,
+                version_number=v.version_number,
+                action=v.action.value,
+                payload=v.payload,
+                salesforce_last_modified=v.salesforce_last_modified,
+                sync_timestamp=v.sync_timestamp,
+                change_source=v.change_source,
+                created_at=v.created_at,
+            )
+            models.append(model)
+        self._session.add_all(models)
+        await self._session.flush()
         return versions
 
     def _to_domain(self, model: MetadataVersionModel) -> MetadataVersion:

@@ -14,11 +14,8 @@ from sfir_backend.domain.ai.models import (
     AIProviderType,
     AIRequest,
     AIResponse,
-    TokenUsage,
 )
 from sfir_backend.infrastructure.llm.ai_cache import AICache
-from sfir_backend.infrastructure.llm.context_retriever import ContextRetriever
-from sfir_backend.infrastructure.llm.providers.base import BaseLLMProvider
 from sfir_backend.infrastructure.llm.providers.registry import ProviderRegistry
 from sfir_backend.infrastructure.llm.tracking import AIUsageTracker
 
@@ -114,7 +111,7 @@ class AIOrchestrator:
         query: str,
         organization_id: uuid.UUID,
         user_id: uuid.UUID,
-        context: dict[str, Any] | None = None,
+        _context: dict[str, Any] | None = None,
         provider: str | None = None,
     ) -> AIResponse:
         return await self.chat(
@@ -131,7 +128,7 @@ class AIOrchestrator:
         data_summary: str,
         organization_id: uuid.UUID,
         user_id: uuid.UUID,
-        additional_context: str = "",
+        _additional_context: str = "",
     ) -> AIResponse:
         return await self.chat(
             query=data_summary,

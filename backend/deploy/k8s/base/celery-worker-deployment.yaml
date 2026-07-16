@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sfir-celery-worker
+  namespace: sfir
+  labels:
+    app.kubernetes.io/name: sfir-backend
+    app.kubernetes.io/component: worker
+    app.kubernetes.io/part-of: sfir
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sfir-backend
+        app.kubernetes.io/component: worker
+        app.kubernetes.io/part-of: sfir
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+    spec:
+      terminationGracePeriodSeconds: 120
+      containers:
+        - name: worker
+          image: ghcr.io/sfir/sfir-backend:latest
+          imagePullPolicy: Always
+          command:
+            - celery
+            - -A
+            - sfir_backend.workers.celery
+            - worker
+            - --loglevel=info
+            - --concurrency=8
+            - --queues=default,metadata,graph,ai
+            - --max-tasks-per-child=1000
+            - --max-memory-per-child=500000
+            - --without-gossip
+            - --without-mingle
+            - --without-heartbeat
+          envFrom:
+            - configMapRef:
+                name: sfir-config
+            - secretRef:
+                name: sfir-secrets
+          env:
+            - name: SFIR_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: sfir-secrets
+                  key: SFIR_DB_PASSWORD
+          resources:
+            requests:
+              cpu: 1000m
+              memory: 1Gi
+            limits:
+              cpu: 4000m
+              memory: 4Gi
+          livenessProbe:
+            exec:
+              command: ["celery", "-A", "sfir_backend.workers.celery", "inspect", "ping", "-d", "celery@$HOSTNAME"]
+            initialDelaySeconds: 30
+            periodSeconds: 60
+            timeoutSeconds: 10
+          lifecycle:
+            preStop:
+              exec:
+                command: ["celery", "-A", "sfir_backend.workers.celery", "control", "cancel_consumer", "default,metadata,graph,ai"]

@@ -68,12 +68,16 @@ class RoleRepository(IRoleRepository):
         await self._session.execute(
             delete(PermissionModel).where(PermissionModel.role_id == role_id),
         )
-        for slug in permissions:
-            self._session.add(PermissionModel(
-                id=uuid.uuid4(),
-                role_id=role_id,
-                permission_slug=slug,
-            ))
+        if permissions:
+            models = [
+                PermissionModel(
+                    id=uuid.uuid4(),
+                    role_id=role_id,
+                    permission_slug=slug,
+                )
+                for slug in permissions
+            ]
+            self._session.add_all(models)
         await self._session.flush()
 
     def _to_domain(self, model: RoleModel) -> Role:

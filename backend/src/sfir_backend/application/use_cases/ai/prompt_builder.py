@@ -1,11 +1,7 @@
 from __future__ import annotations
 
-import uuid
-from typing import Any
-
 from sfir_backend.domain.ai.models import AIFeature, Citation
 from sfir_backend.infrastructure.llm.prompt_template import (
-    CONTEXT_TEMPLATES,
     PromptTemplateEngine,
 )
 from sfir_backend.infrastructure.llm.providers.base import LLMMessage

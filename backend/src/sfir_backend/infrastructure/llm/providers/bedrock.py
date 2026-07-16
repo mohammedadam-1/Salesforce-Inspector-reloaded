@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 from sfir_backend.infrastructure.llm.providers.base import (
     BaseLLMProvider,
@@ -41,7 +42,7 @@ class BedrockProvider(BaseLLMProvider):
     async def chat(
         self,
         messages: list[LLMMessage],
-        tools: list[ToolDefinition] | None = None,
+        _tools: list[ToolDefinition] | None = None,
         temperature: float = 0.1,
         max_tokens: int = 4096,
     ) -> LLMResponse:
@@ -90,7 +91,7 @@ class BedrockProvider(BaseLLMProvider):
         self,
         messages: list[LLMMessage],
         tools: list[ToolDefinition],
-        tool_choice: str = "auto",
+        _tool_choice: str = "auto",
         temperature: float = 0.1,
         max_tokens: int = 4096,
     ) -> LLMResponse:

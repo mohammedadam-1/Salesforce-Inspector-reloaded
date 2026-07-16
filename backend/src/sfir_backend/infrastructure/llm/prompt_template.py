@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 from typing import Any
 
 import structlog
 
-from sfir_backend.domain.ai.models import AIFeature, AIProviderType
+from sfir_backend.domain.ai.models import AIFeature
 
 logger = structlog.get_logger(__name__)
 

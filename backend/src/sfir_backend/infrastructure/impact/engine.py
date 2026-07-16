@@ -4,19 +4,15 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
-from sfir_backend.domain.graph.models import Graph
 from sfir_backend.domain.impact.models import (
     AffectedComponent,
     AnalysisType,
     BlastRadius,
     ChangeType,
-    DeploymentReadiness,
     ImpactAnalysis,
     ImpactReport,
     ImpactSeverity,
     ImpactSummary,
-    RecommendedAction,
-    RiskAssessment,
     SimulationRequest,
     SimulationResult,
 )

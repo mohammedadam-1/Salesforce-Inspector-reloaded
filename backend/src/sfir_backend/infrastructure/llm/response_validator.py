@@ -45,10 +45,7 @@ class ResponseValidator:
             r"(?i)^(i'?m (sorry|unable|not able)|i cannot|cannot|as an? (ai|language model))",
             r"(?i)^(i don't have|i do not have|no information|insufficient)",
         ]
-        for pattern in refusal_patterns:
-            if re.match(pattern, content.strip()):
-                return True
-        return False
+        return any(re.match(pattern, content.strip()) for pattern in refusal_patterns)
 
     def check_length_limits(self, content: str, max_chars: int | None = None) -> dict[str, Any]:
         limit = max_chars or self._max_length
@@ -73,9 +70,7 @@ class ResponseFormatter:
                 in_code_block = not in_code_block
                 formatted.append(line)
                 continue
-            if not in_code_block and stripped.startswith("- ") and not stripped.startswith("  "):
-                formatted.append(line)
-            elif not in_code_block and re.match(r"^\d+\.\s", stripped):
+            if (not in_code_block and stripped.startswith("- ") and not stripped.startswith("  ")) or (not in_code_block and re.match(r"^\d+\.\s", stripped)):
                 formatted.append(line)
             elif not in_code_block and stripped and not stripped.startswith("#"):
                 formatted.append(f"{line}\n")

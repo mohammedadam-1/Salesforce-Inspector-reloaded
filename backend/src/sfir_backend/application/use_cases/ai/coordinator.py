@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import uuid
 from typing import Any
 
 import structlog
@@ -8,11 +7,9 @@ import structlog
 from sfir_backend.application.use_cases.ai.prompt_builder import PromptBuilder
 from sfir_backend.domain.ai.models import (
     AIFeature,
-    AIProviderType,
     AIRequest,
     AIResponse,
     Citation,
-    SafetyCheckResult,
     TokenUsage,
 )
 from sfir_backend.infrastructure.llm.ai_cache import AICache
@@ -21,7 +18,6 @@ from sfir_backend.infrastructure.llm.context_retriever import (
     ContextCompressor,
     ContextRetriever,
 )
-from sfir_backend.infrastructure.llm.providers.base import BaseLLMProvider
 from sfir_backend.infrastructure.llm.providers.registry import ProviderRegistry
 from sfir_backend.infrastructure.llm.response_validator import (
     ResponseFormatter,

@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import copy
 from typing import Any
 
-from sfir_backend.domain.graph.models import Graph, GraphNode
+from sfir_backend.domain.graph.models import Graph
 from sfir_backend.domain.impact.models import (
     AnalysisType,
     ChangeType,

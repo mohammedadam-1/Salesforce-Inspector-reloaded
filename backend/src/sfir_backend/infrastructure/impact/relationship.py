@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sfir_backend.domain.graph.models import EdgeType, Graph, NodeType
+from sfir_backend.domain.graph.models import Graph, NodeType
 from sfir_backend.domain.impact.models import (
     AffectedComponent,
     ImpactSeverity,

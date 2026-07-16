@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
 
 from openai import AsyncOpenAI
 
@@ -66,7 +66,7 @@ class OpenRouterProvider(BaseLLMProvider):
         self,
         messages: list[LLMMessage],
         tools: list[ToolDefinition],
-        tool_choice: str = "auto",
+        _tool_choice: str = "auto",
         temperature: float = 0.1,
         max_tokens: int = 4096,
     ) -> LLMResponse:

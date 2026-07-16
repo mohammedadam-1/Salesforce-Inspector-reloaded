@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
-
 from sfir_backend.domain.impact.models import BlastRadius, ImpactSeverity, RiskAssessment
 
 _TYPE_WEIGHTS: dict[str, float] = {

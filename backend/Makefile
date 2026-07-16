@@ -2,7 +2,7 @@
 # SFIR Backend — Makefile
 # ─────────────────────────────────────────────
 
-.PHONY: help install dev-install lint typecheck test test-cov migrate alembic-autogen docker-up docker-down clean
+.PHONY: help install dev-install lint typecheck test test-cov migrate alembic-autogen docker-up docker-down clean prod-build prod-check security-scan load-test chaos-test
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
@@ -41,18 +41,46 @@ migrate: ## Run Alembic migrations
 alembic-autogen: ## Generate a new Alembic migration
 	uv run alembic revision --autogenerate -m "$(name)"
 
+# ── Docker ────────────────────────────────────
 docker-up: ## Start full stack with Docker Compose
 	docker compose up -d
 
 docker-up-infra: ## Start only infrastructure (DB, Redis)
 	docker compose -f docker-compose.infra.yml up -d
 
+docker-up-prod: ## Start production-like stack
+	docker compose -f docker-compose.prod.yml up -d
+
 docker-down: ## Stop all Docker containers
 	docker compose down
+
+docker-down-prod: ## Stop production stack
+	docker compose -f docker-compose.prod.yml down
 
 docker-logs: ## Follow logs
 	docker compose logs -f
 
+# ── Production ────────────────────────────────
+prod-build: ## Build production Docker image
+	docker build -f Dockerfile.prod -t sfir-backend:latest .
+
+prod-check: ## Run all pre-deployment checks
+	uv run ruff check src/ tests/
+	uv run mypy src/
+	uv run pytest --cov=sfir_backend --cov-report=term-missing -q
+
+# ── Security ──────────────────────────────────
+security-scan: ## Run Trivy security scan (requires trivy)
+	trivy fs --severity CRITICAL,HIGH --no-progress .
+
+# ── Load & Chaos ──────────────────────────────
+load-test: ## Run Locust load tests (requires locust)
+	locust -f tests/load/test_api.py --host=http://localhost:8000 --headless -u 100 -r 10 --run-time 5m
+
+chaos-test: ## Run chaos tests
+	uv run pytest tests/chaos/ -v
+
+# ── Cleanup ───────────────────────────────────
 clean: ## Clean Python cache files
 	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 	find . -type f -name "*.pyc" -delete

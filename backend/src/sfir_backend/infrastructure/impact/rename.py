@@ -5,8 +5,6 @@ from typing import Any
 from sfir_backend.domain.impact.models import (
     AffectedComponent,
     ChangeType,
-    ImpactSeverity,
-    ImpactStatus,
     RecommendedAction,
 )
 from sfir_backend.infrastructure.impact.analyzer import DependencyImpactAnalyzer

@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import uuid
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog

@@ -10,6 +10,9 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sfir_backend.config.settings import get_settings
 from sfir_backend.infrastructure.database.base import Base
 
+# Import all models so they register with Base.metadata
+import sfir_backend.infrastructure.persistence.models  # noqa: F401
+
 config = context.config
 
 if config.config_file_name is not None:

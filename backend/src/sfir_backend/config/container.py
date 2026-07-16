@@ -518,26 +518,26 @@ class Container:
         )
 
     def _make_ai_orchestrator(self) -> AIOrchestrator:
-        from sfir_backend.infrastructure.llm.providers.registry import (
-            create_provider_registry,
-        )
-        from sfir_backend.infrastructure.llm.context_retriever import (
-            ContextRetriever,
-            ContextCompressor,
-        )
+        from sfir_backend.infrastructure.llm.ai_cache import AICache
         from sfir_backend.infrastructure.llm.citation_generator import (
             CitationGenerator,
         )
-        from sfir_backend.infrastructure.llm.response_validator import (
-            ResponseValidator,
-            ResponseFormatter,
+        from sfir_backend.infrastructure.llm.context_retriever import (
+            ContextCompressor,
+            ContextRetriever,
         )
-        from sfir_backend.infrastructure.llm.safety_filter import SafetyFilter
-        from sfir_backend.infrastructure.llm.tracking import AIUsageTracker
-        from sfir_backend.infrastructure.llm.ai_cache import AICache
         from sfir_backend.infrastructure.llm.prompt_template import (
             PromptTemplateEngine,
         )
+        from sfir_backend.infrastructure.llm.providers.registry import (
+            create_provider_registry,
+        )
+        from sfir_backend.infrastructure.llm.response_validator import (
+            ResponseFormatter,
+            ResponseValidator,
+        )
+        from sfir_backend.infrastructure.llm.safety_filter import SafetyFilter
+        from sfir_backend.infrastructure.llm.tracking import AIUsageTracker
 
         provider_registry = create_provider_registry(self._settings)
         prompt_template_engine = PromptTemplateEngine()

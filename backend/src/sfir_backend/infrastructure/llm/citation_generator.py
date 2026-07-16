@@ -39,8 +39,7 @@ class CitationGenerator:
 
         # Match against provided context citations
         for ctx_citation in context_citations:
-            if ctx_citation.source_id not in seen_ids:
-                if ctx_citation.source_name.lower() in response.lower():
+            if ctx_citation.source_id not in seen_ids and ctx_citation.source_name.lower() in response.lower():
                     citations.append(ctx_citation)
                     seen_ids.add(ctx_citation.source_id)
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
 
 import google.genai as genai
 from google.genai import types
@@ -37,7 +37,7 @@ class GeminiProvider(BaseLLMProvider):
     async def chat(
         self,
         messages: list[LLMMessage],
-        tools: list[ToolDefinition] | None = None,
+        _tools: list[ToolDefinition] | None = None,
         temperature: float = 0.1,
         max_tokens: int = 4096,
     ) -> LLMResponse:
@@ -69,7 +69,7 @@ class GeminiProvider(BaseLLMProvider):
         self,
         messages: list[LLMMessage],
         tools: list[ToolDefinition],
-        tool_choice: str = "auto",
+        _tool_choice: str = "auto",
         temperature: float = 0.1,
         max_tokens: int = 4096,
     ) -> LLMResponse:

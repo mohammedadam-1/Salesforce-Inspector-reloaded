@@ -11,6 +11,9 @@ from sfir_backend.infrastructure.persistence.models.organization import Organiza
 from sfir_backend.infrastructure.persistence.models.permission import PermissionModel
 from sfir_backend.infrastructure.persistence.models.refresh_token import RefreshTokenModel
 from sfir_backend.infrastructure.persistence.models.role import RoleModel
+from sfir_backend.infrastructure.persistence.models.salesforce_connection import (
+    SalesforceConnectionModel,
+)
 from sfir_backend.infrastructure.persistence.models.session import SessionModel
 from sfir_backend.infrastructure.persistence.models.user import UserModel
 
@@ -22,6 +25,7 @@ __all__ = [
     "PermissionModel",
     "RefreshTokenModel",
     "RoleModel",
+    "SalesforceConnectionModel",
     "SessionModel",
     "SyncHistoryModel",
     "SyncJobModel",

@@ -104,8 +104,4 @@ class BlastRadiusCalculator:
             rec_stack.discard(node)
             return False
 
-        for n in nodes:
-            if n not in visited:
-                if dfs(n):
-                    return True
-        return False
+        return any(n not in visited and dfs(n) for n in nodes)

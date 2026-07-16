@@ -41,7 +41,11 @@ class EncryptionService(EncryptionPort):
 
     @property
     def _is_production(self) -> bool:
-        return False
+        try:
+            from sfir_backend.config.settings import get_settings
+            return get_settings().is_production
+        except Exception:
+            return False
 
     def encrypt(self, plaintext: str, context: dict | None = None) -> str:
         data_key = self._generate_data_key()

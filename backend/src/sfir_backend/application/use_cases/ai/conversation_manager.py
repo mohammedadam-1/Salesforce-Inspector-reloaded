@@ -5,7 +5,7 @@ from typing import Any
 
 import structlog
 
-from sfir_backend.domain.ai.models import AIFeature, AIResponse, Citation, TokenUsage
+from sfir_backend.domain.ai.models import AIFeature, AIResponse, TokenUsage
 from sfir_backend.infrastructure.llm.conversation_memory import ConversationMemory
 
 logger = structlog.get_logger(__name__)
