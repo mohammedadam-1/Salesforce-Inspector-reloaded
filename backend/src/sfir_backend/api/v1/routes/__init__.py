@@ -9,6 +9,7 @@ from sfir_backend.api.v1.routes.graph import router as graph_router
 from sfir_backend.api.v1.routes.health import router as health_router
 from sfir_backend.api.v1.routes.impact import router as impact_router
 from sfir_backend.api.v1.routes.jobs import router as jobs_router
+from sfir_backend.api.v1.routes.metadata import router as metadata_router
 from sfir_backend.api.v1.routes.metadata_sync import router as sync_router
 from sfir_backend.api.v1.routes.observability import router as obs_router
 from sfir_backend.api.v1.routes.organizations import router as org_router
@@ -22,6 +23,7 @@ api_router.include_router(auth_router)
 api_router.include_router(org_router)
 api_router.include_router(sf_router)
 api_router.include_router(sync_router)
+api_router.include_router(metadata_router)
 api_router.include_router(graph_router)
 api_router.include_router(deps_router)
 api_router.include_router(search_router)

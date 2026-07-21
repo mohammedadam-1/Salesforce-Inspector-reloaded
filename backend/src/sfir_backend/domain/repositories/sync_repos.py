@@ -69,6 +69,37 @@ class IMetadataVersionRepository(ABC):
     @abstractmethod
     async def save_many(self, versions: list[MetadataVersion]) -> list[MetadataVersion]: ...
 
+    @abstractmethod
+    async def list_component_types(
+        self, org_id: uuid.UUID,
+    ) -> dict[str, int]: ...
+
+    @abstractmethod
+    async def list_latest_by_type(
+        self, org_id: uuid.UUID, component_type: str,
+    ) -> list[MetadataVersion]: ...
+
+    @abstractmethod
+    async def search(
+        self,
+        org_id: uuid.UUID,
+        query: str,
+        metadata_types: list[str] | None = None,
+        namespace: str | None = None,
+        managed: bool | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[MetadataVersion], int]: ...
+
+    @abstractmethod
+    async def search_autocomplete(
+        self,
+        org_id: uuid.UUID,
+        prefix: str,
+        metadata_types: list[str] | None = None,
+        limit: int = 10,
+    ) -> list[MetadataVersion]: ...
+
 
 class ISyncHistoryRepository(ABC):
     @abstractmethod

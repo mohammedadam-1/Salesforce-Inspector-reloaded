@@ -15,6 +15,33 @@ class ConversationManager:
     def __init__(self, memory: ConversationMemory | None = None) -> None:
         self._memory = memory or ConversationMemory()
 
+    def create_conversation(
+        self,
+        organization_id: uuid.UUID,
+        user_id: uuid.UUID,
+        title: str = "",
+        feature: AIFeature = AIFeature.QUESTION_ANSWERING,
+    ) -> Conversation:
+        return self._memory.create_conversation(
+            organization_id=organization_id,
+            user_id=user_id,
+            title=title or f"AI {feature.value} conversation",
+            feature=feature,
+        )
+
+    def update_conversation(
+        self,
+        conversation_id: uuid.UUID,
+        patches: dict[str, Any],
+    ) -> bool:
+        conversation = self._memory.get_conversation(conversation_id)
+        if not conversation:
+            return False
+        for key, value in patches.items():
+            if hasattr(conversation, key):
+                setattr(conversation, key, value)
+        return True
+
     def get_or_create_conversation(
         self,
         conversation_id: uuid.UUID | None,
@@ -29,7 +56,7 @@ class ConversationManager:
                 history = self._memory.get_history(conversation_id)
                 return conversation_id, history
 
-        conversation = self._memory.create_conversation(
+        conversation = self.create_conversation(
             organization_id=organization_id,
             user_id=user_id,
             title=title or f"AI {feature.value} conversation",

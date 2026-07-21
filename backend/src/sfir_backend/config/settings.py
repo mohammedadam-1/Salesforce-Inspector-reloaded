@@ -126,6 +126,7 @@ class Settings(BaseSettings):
     cors_origins: list[str] = Field(
         default=[
             "http://localhost:8000",
+            "http://localhost:5173",
         ],
         description="Allowed CORS origins. In production, replace with specific "
                     "frontend URL(s) and Chrome extension ID(s). "

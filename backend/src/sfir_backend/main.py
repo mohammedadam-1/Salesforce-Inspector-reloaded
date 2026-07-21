@@ -78,7 +78,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         openapi_url="/openapi.json" if not settings.is_production else None,
     )
 
-    # CORS
+    # Security middleware
+    # Rate limit middleware added in lifespan after container is ready
+    add_security_middleware(app, settings)
+
+    # Middleware (logging, metrics, tracing)
+    add_middleware(app)
+
+    # CORS (outermost — must handle preflight before any other middleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -86,13 +93,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-
-    # Security middleware
-    # Rate limit middleware added in lifespan after container is ready
-    add_security_middleware(app, settings)
-
-    # Middleware (logging, metrics, tracing)
-    add_middleware(app)
 
     # Error handlers
     add_error_handlers(app)

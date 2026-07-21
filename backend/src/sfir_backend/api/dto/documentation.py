@@ -44,6 +44,13 @@ class DocumentationListResponse(BaseModel):
     total: int
 
 
+class DocumentationExportResponse(BaseModel):
+    format: str
+    content: str
+    filename: str
+    total_components: int
+
+
 class ComponentDocRequest(BaseModel):
     component_type: str
     component_name: str

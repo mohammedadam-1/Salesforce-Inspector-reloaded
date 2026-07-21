@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sfir_backend.domain.entities.user import User
 from sfir_backend.domain.repositories import IUserRepository
 from sfir_backend.domain.value_objects.email import Email
+from sfir_backend.domain.value_objects.user_status import UserStatus
 from sfir_backend.infrastructure.persistence.models.user import UserModel
 
 
@@ -79,7 +80,7 @@ class UserRepository(IUserRepository):
             email=Email(model.email),
             password_hash=model.password_hash,
             display_name=model.display_name,
-            status=model.status,  # type: ignore
+            status=UserStatus(model.status),
             is_locked=model.is_locked,
             locked_until=model.locked_until,
             login_attempts=model.login_attempts,

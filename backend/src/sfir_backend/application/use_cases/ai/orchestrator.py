@@ -53,7 +53,7 @@ class AIOrchestrator:
         cache: AICache | None = None,
     ) -> None:
         self._coordinator = coordinator
-        self._conversation_manager = conversation_manager
+        self.conversation_manager = conversation_manager
         self._usage_tracker = usage_tracker
         self._provider_registry = provider_registry
         self._cache = cache
@@ -71,14 +71,14 @@ class AIOrchestrator:
         stream: bool = False,
         feature: AIFeature = AIFeature.QUESTION_ANSWERING,
     ) -> AIResponse:
-        conv_id, history = self._conversation_manager.get_or_create_conversation(
+        conv_id, history = self.conversation_manager.get_or_create_conversation(
             conversation_id=conversation_id,
             organization_id=organization_id,
             user_id=user_id,
             feature=feature,
         )
 
-        self._conversation_manager.record_user_message(conv_id, query)
+        self.conversation_manager.record_user_message(conv_id, query)
 
         provider_type = AIProviderType(provider) if provider else AIProviderType.OPENAI
         actual_temperature = temperature if temperature is not None else DEFAULT_FEATURE_TEMPERATURES.get(feature, 0.1)
@@ -102,7 +102,7 @@ class AIOrchestrator:
             context_data={"history": history},
         )
 
-        self._conversation_manager.record_assistant_response(conv_id, response)
+        self.conversation_manager.record_assistant_response(conv_id, response)
         return response
 
     async def explain(

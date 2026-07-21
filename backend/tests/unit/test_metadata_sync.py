@@ -678,6 +678,40 @@ class FakeVersionRepo(IMetadataVersionRepository):
             await self.save(v)
         return versions
 
+    async def list_component_types(self, org_id):
+        counts: dict[str, int] = {}
+        for v in self._versions.values():
+            if v.organization_id == org_id:
+                counts[v.component_type] = counts.get(v.component_type, 0) + 1
+        return counts
+
+    async def list_latest_by_type(self, org_id, component_type):
+        latest: dict[str, MetadataVersion] = {}
+        for v in self._versions.values():
+            if v.organization_id == org_id and v.component_type == component_type:
+                existing = latest.get(v.component_name)
+                if not existing or v.version_number > existing.version_number:
+                    latest[v.component_name] = v
+        return list(latest.values())
+
+    async def search(self, org_id, query, metadata_types=None, namespace=None, managed=None, limit=50, offset=0):
+        matching = [
+            v for v in self._versions.values()
+            if v.organization_id == org_id
+            and (query.lower() in v.component_name.lower() or query.lower() in v.component_type.lower())
+            and (not metadata_types or v.component_type in metadata_types)
+        ]
+        return matching[offset:offset+limit], len(matching)
+
+    async def search_autocomplete(self, org_id, prefix, metadata_types=None, limit=10):
+        matching = [
+            v for v in self._versions.values()
+            if v.organization_id == org_id
+            and v.component_name.lower().startswith(prefix.lower())
+            and (not metadata_types or v.component_type in metadata_types)
+        ]
+        return matching[:limit]
+
 
 class FakeSyncHistoryRepo(ISyncHistoryRepository):
     def __init__(self):

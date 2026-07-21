@@ -5,10 +5,14 @@ from fastapi import Depends, Header, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sfir_backend.application.use_cases.ai.agent import AgentService
+from sfir_backend.application.use_cases.ai.conversation_manager import (
+    ConversationManager,
+)
 from sfir_backend.application.use_cases.ai.orchestrator import AIOrchestrator
 from sfir_backend.application.use_cases.auth import AuthUseCase
 from sfir_backend.application.use_cases.graph.service import GraphService
 from sfir_backend.application.use_cases.metadata_sync import SyncCoordinator
+from sfir_backend.infrastructure.documentation.engine import DocumentationEngine
 from sfir_backend.application.use_cases.organization import OrganizationUseCase
 from sfir_backend.application.use_cases.rbac import RBACUseCase
 from sfir_backend.application.use_cases.salesforce import SalesforceUseCase
@@ -111,6 +115,18 @@ async def get_ai_orchestrator(
 ) -> AIOrchestrator:
     return container.get_use_case("ai_orchestrator")
 
+
+async def get_conversation_manager(
+    container: Container = Depends(get_container),
+) -> ConversationManager:
+    orchestrator: AIOrchestrator = container.get_use_case("ai_orchestrator")
+    return orchestrator.conversation_manager
+
+
+async def get_documentation_engine(
+    container: Container = Depends(get_container),
+) -> DocumentationEngine:
+    return container.get_service("documentation_engine")
 
 async def get_job_engine(
     container: Container = Depends(get_container),

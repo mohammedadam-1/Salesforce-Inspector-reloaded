@@ -34,7 +34,7 @@ class RedisConnectionPool:
         return await self._create_client()
 
     async def _create_client(self) -> Redis:
-        redis_url = str(self._settings.redis_url)
+        redis_url = self._settings.redis_url.get_secret_value()
         self._pool = ConnectionPool.from_url(
             redis_url,
             max_connections=self._max_connections,

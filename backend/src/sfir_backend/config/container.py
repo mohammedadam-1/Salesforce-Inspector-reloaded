@@ -57,6 +57,7 @@ from sfir_backend.infrastructure.database.session import (
     create_session_factory,
 )
 from sfir_backend.infrastructure.jobs.engine import JobEngine
+from sfir_backend.infrastructure.documentation.engine import DocumentationEngine
 from sfir_backend.infrastructure.observability.alerting import AlertManager
 from sfir_backend.infrastructure.observability.diagnostics import DiagnosticsService
 from sfir_backend.infrastructure.observability.health import HealthCheckManager
@@ -295,6 +296,7 @@ class Container:
         )
         self._services["parser_registry"] = self._make_parser_registry()
         self._services["extractor"] = self._make_extractor()
+        self._services["documentation_engine"] = DocumentationEngine()
         self._services["job_engine"] = JobEngine()
 
         coordinator = self._ports["cache_coordinator"]

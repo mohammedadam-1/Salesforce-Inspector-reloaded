@@ -248,6 +248,101 @@ class MetadataVersionRepository(IMetadataVersionRepository):
         await self._session.flush()
         return versions
 
+    async def list_component_types(
+        self, org_id: uuid.UUID,
+    ) -> dict[str, int]:
+        result = await self._session.execute(
+            select(MetadataVersionModel.component_type, func.count(MetadataVersionModel.id.distinct()))
+            .where(MetadataVersionModel.organization_id == org_id)
+            .group_by(MetadataVersionModel.component_type)
+            .order_by(MetadataVersionModel.component_type)
+        )
+        return dict(result.all())
+
+    async def list_latest_by_type(
+        self, org_id: uuid.UUID, component_type: str,
+    ) -> list[MetadataVersion]:
+        subq = (
+            select(
+                MetadataVersionModel.component_name,
+                func.max(MetadataVersionModel.version_number).label("max_vn"),
+            )
+            .where(MetadataVersionModel.organization_id == org_id)
+            .where(MetadataVersionModel.component_type == component_type)
+            .group_by(MetadataVersionModel.component_name)
+            .subquery()
+        )
+        result = await self._session.execute(
+            select(MetadataVersionModel)
+            .join(
+                subq,
+                (MetadataVersionModel.component_name == subq.c.component_name)
+                & (MetadataVersionModel.version_number == subq.c.max_vn),
+            )
+            .where(MetadataVersionModel.organization_id == org_id)
+            .where(MetadataVersionModel.component_type == component_type)
+            .order_by(MetadataVersionModel.component_name)
+        )
+        return [self._to_domain(m) for m in result.scalars().all()]
+
+    async def search(
+        self,
+        org_id: uuid.UUID,
+        query: str,
+        metadata_types: list[str] | None = None,
+        namespace: str | None = None,
+        managed: bool | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[MetadataVersion], int]:
+        base = select(MetadataVersionModel).where(MetadataVersionModel.organization_id == org_id)
+        count_base = select(func.count()).select_from(MetadataVersionModel).where(MetadataVersionModel.organization_id == org_id)
+
+        pattern = f"%{query}%"
+        base = base.where(
+            MetadataVersionModel.component_name.ilike(pattern) |
+            MetadataVersionModel.component_type.ilike(pattern)
+        )
+        count_base = count_base.where(
+            MetadataVersionModel.component_name.ilike(pattern) |
+            MetadataVersionModel.component_type.ilike(pattern)
+        )
+
+        if metadata_types:
+            base = base.where(MetadataVersionModel.component_type.in_(metadata_types))
+            count_base = count_base.where(MetadataVersionModel.component_type.in_(metadata_types))
+
+        total_result = await self._session.execute(count_base)
+        total = total_result.scalar() or 0
+
+        result = await self._session.execute(
+            base
+            .order_by(MetadataVersionModel.component_type, MetadataVersionModel.component_name)
+            .limit(limit)
+            .offset(offset)
+        )
+        items = [self._to_domain(m) for m in result.scalars().all()]
+        return items, total
+
+    async def search_autocomplete(
+        self,
+        org_id: uuid.UUID,
+        prefix: str,
+        metadata_types: list[str] | None = None,
+        limit: int = 10,
+    ) -> list[MetadataVersion]:
+        base = select(MetadataVersionModel).where(MetadataVersionModel.organization_id == org_id)
+        pattern = f"{prefix}%"
+        base = base.where(MetadataVersionModel.component_name.ilike(pattern))
+        if metadata_types:
+            base = base.where(MetadataVersionModel.component_type.in_(metadata_types))
+        result = await self._session.execute(
+            base
+            .order_by(MetadataVersionModel.component_type, MetadataVersionModel.component_name)
+            .limit(limit)
+        )
+        return [self._to_domain(m) for m in result.scalars().all()]
+
     def _to_domain(self, model: MetadataVersionModel) -> MetadataVersion:
         return MetadataVersion(
             id=model.id,

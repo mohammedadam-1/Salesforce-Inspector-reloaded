@@ -6,6 +6,8 @@ from pydantic import BaseModel, Field
 class SearchRequest(BaseModel):
     query: str = Field(description="Search query string")
     metadata_types: list[str] | None = Field(default=None, description="Filter by metadata types")
+    namespace: str | None = None
+    managed: bool | None = None
     org_id: str | None = None
     limit: int = Field(default=50, ge=1, le=200)
     offset: int = Field(default=0, ge=0)
@@ -26,6 +28,8 @@ class SearchResponse(BaseModel):
     limit: int
     offset: int
     query: str
+    namespace: str | None = None
+    managed: bool | None = None
 
 
 class AutocompleteRequest(BaseModel):

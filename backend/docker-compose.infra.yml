@@ -106,5 +106,4 @@ volumes:
 
 networks:
   sfir-network:
-    name: sfir-network
-    driver: bridge
+    external: true
