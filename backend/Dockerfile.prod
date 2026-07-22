@@ -1,0 +1,63 @@
+# syntax=docker/dockerfile:1.7
+# ────────────────────────────────────────────────────────────
+# SFIR Backend — Production Multi-Stage Dockerfile
+# Distroless runtime for minimal attack surface
+# ────────────────────────────────────────────────────────────
+
+# ════════════════════════════════════════════════════════════
+# Stage 1: Base
+# ════════════════════════════════════════════════════════════
+FROM python:3.13-slim AS base
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+# ════════════════════════════════════════════════════════════
+# Stage 2: Builder — install dependencies
+# ════════════════════════════════════════════════════════════
+FROM base AS builder
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    gcc \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml uv.lock ./
+RUN uv sync --no-dev --frozen --no-install-project
+
+# ════════════════════════════════════════════════════════════
+# Stage 3: Runtime — distroless-glibc
+# ════════════════════════════════════════════════════════════
+FROM gcr.io/distroless/python3-debian12:nonroot AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app/src
+
+WORKDIR /app
+
+COPY --from=builder /app/.venv /app/.venv
+COPY --from=builder /usr/lib/x86_64-linux-gnu/libpq.so* /usr/lib/x86_64-linux-gnu/
+COPY --from=builder /usr/lib/x86_64-linux-gnu/libldap_r-2.4.so* /usr/lib/x86_64-linux-gnu/ 2>/dev/null || true
+COPY --from=builder /usr/lib/x86_64-linux-gnu/liblber-2.4.so* /usr/lib/x86_64-linux-gnu/ 2>/dev/null || true
+COPY --from=builder /usr/lib/x86_64-linux-gnu/libsasl2.so* /usr/lib/x86_64-linux-gnu/ 2>/dev/null || true
+
+COPY src/ /app/src/
+COPY alembic.ini /app/alembic.ini
+COPY alembic/ /app/alembic/
+
+USER nonroot:nonroot
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=15s \
+    CMD ["/app/.venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health/live')"]
+
+ENTRYPOINT ["/app/.venv/bin/python", "-m", "uvicorn"]
+CMD ["sfir_backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4", "--loop", "uvloop", "--http", "httptools"]

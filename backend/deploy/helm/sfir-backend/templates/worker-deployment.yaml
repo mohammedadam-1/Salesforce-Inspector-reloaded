@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sfir.fullname" . }}-worker
+  labels:
+    {{- include "sfir.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ .Values.celery.worker.replicas }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        {{- include "sfir.labels" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+    spec:
+      terminationGracePeriodSeconds: 120
+      containers:
+        - name: worker
+          image: "{{ .Values.global.imageRegistry }}/{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - celery
+            - -A
+            - sfir_backend.workers.celery
+            - worker
+            - --loglevel=info
+            - --concurrency={{ .Values.celery.worker.concurrency }}
+            - --queues={{ .Values.celery.worker.queues }}
+            - --max-tasks-per-child=1000
+            - --max-memory-per-child=500000
+          envFrom:
+            - configMapRef:
+                name: {{ include "sfir.fullname" . }}-config
+            - secretRef:
+                name: {{ include "sfir.fullname" . }}-secrets
+          resources:
+            {{- toYaml .Values.celery.worker.resources | nindent 12 }}

@@ -1,0 +1,29 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: sfir-api-pdb
+  namespace: sfir
+  labels:
+    app.kubernetes.io/name: sfir-backend
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: sfir
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: api
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: sfir-worker-pdb
+  namespace: sfir
+  labels:
+    app.kubernetes.io/name: sfir-backend
+    app.kubernetes.io/component: worker
+    app.kubernetes.io/part-of: sfir
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: worker

@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "sfir.fullname" . }}-config
+  labels:
+    {{- include "sfir.labels" . | nindent 4 }}
+data:
+  SFIR_ENVIRONMENT: {{ .Values.global.environment | quote }}
+  SFIR_CORS_ORIGINS: {{ .Values.security.corsOrigins | quote }}
+  SFIR_LOG_LEVEL: {{ .Values.observability.logging.level | quote }}
+  SFIR_LOG_FORMAT: {{ .Values.observability.logging.format | quote }}
+  SFIR_RATE_LIMIT_DEFAULT: {{ .Values.security.rateLimitDefault | quote }}
+  SFIR_DATABASE_POOL_SIZE: "20"
+  SFIR_DATABASE_MAX_OVERFLOW: "40"
+  SFIR_OTLP_ENDPOINT: {{ .Values.observability.otlpEndpoint | quote }}

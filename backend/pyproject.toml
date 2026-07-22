@@ -1,0 +1,112 @@
+[project]
+name = "sfir-backend"
+version = "0.1.0"
+description = "Production backend for an AI-powered Salesforce Inspector platform."
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi[standard]>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "python-multipart>=0.0.12",
+
+    "sqlalchemy[asyncio]>=2.0.35",
+    "asyncpg>=0.29.0",
+    "alembic>=1.13.3",
+
+    "pydantic>=2.9.2",
+    "pydantic-settings>=2.5.2",
+    "orjson>=3.10.0",
+
+    "python-jose[cryptography]>=3.3.0",
+    "passlib[bcrypt]>=1.7.4",
+    "cryptography>=43.0.0",
+
+    "redis[hiredis]>=5.1.0",
+    "celery>=5.4.0",
+
+    "httpx>=0.28.0",
+
+    "openai>=1.52.0",
+    "anthropic>=0.42.0",
+
+    "opentelemetry-api>=1.27.0",
+    "opentelemetry-sdk>=1.27.0",
+    "opentelemetry-instrumentation>=0.48b0",
+    "opentelemetry-exporter-otlp>=1.27.0",
+    "opentelemetry-instrumentation-fastapi>=0.48b0",
+    "opentelemetry-instrumentation-sqlalchemy>=0.48b0",
+    "opentelemetry-instrumentation-httpx>=0.48b0",
+    "structlog>=24.4.0",
+    "prometheus-client>=0.21.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "httpx>=0.28.0",
+    "pytest-cov>=5.0.0",
+    "factory-boy>=3.3.0",
+    "faker>=30.0.0",
+    "ruff>=0.6.0",
+    "mypy>=1.11.0",
+    "pre-commit>=3.8.0",
+    "psycopg2-binary>=2.9.0",
+    "fakeredis>=2.26.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+norecursedirs = ["tests/load", "tests/chaos"]
+asyncio_mode = "auto"
+markers = [
+    "unit: Unit tests (no external deps)",
+    "integration: Integration tests (require DB/Redis)",
+    "api: API endpoint tests",
+    "security: Security tests",
+    "slow: Tests that take more than 5 seconds",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+exclude = ["alembic/", "migrations/"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ARG", "C4", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["ARG001", "ARG002"]
+"src/sfir_backend/api/v1/routes/*" = ["B008"]
+"src/sfir_backend/api/deps.py" = ["B008"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+ignore_missing_imports = true
+disallow_untyped_defs = true
+disallow_any_unimported = false
+warn_return_any = true
+warn_unused_configs = true
+exclude = ["tests/", "alembic/"]
+
+[tool.coverage.run]
+source = ["sfir_backend"]
+omit = ["tests/*", "alembic/*", "**/__init__.py"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "def __repr__",
+    "raise NotImplementedError",
+]
+
+[build-system]
+requires = ["setuptools>=75.0.0", "wheel"]
+build-backend = "setuptools.build_meta"

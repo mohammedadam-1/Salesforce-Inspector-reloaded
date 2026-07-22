@@ -1,0 +1,11 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "sfir.fullname" . }}-api-pdb
+  labels:
+    {{- include "sfir.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ sub .Values.api.replicas 1 | max 1 }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: api

@@ -1,0 +1,108 @@
+from sfir_backend.domain.metadata.analytics import Dashboard, DashboardComponent, Report
+from sfir_backend.domain.metadata.apex import (
+    ApexClass,
+    ApexComponent,
+    ApexPage,
+    ApexTrigger,
+)
+from sfir_backend.domain.metadata.base import (
+    CanonicalMetadata,
+    FieldType,
+    MetadataComponentRef,
+    ObjectFieldRef,
+    RecordTypeVisibility,
+)
+from sfir_backend.domain.metadata.content import Document, EmailTemplate, StaticResource
+from sfir_backend.domain.metadata.flows import Flow, FlowElement, FlowStage, FlowVariable
+from sfir_backend.domain.metadata.layouts import (
+    Layout,
+    LayoutItem,
+    LayoutSection,
+    MiniLayout,
+    RelatedListItem,
+)
+from sfir_backend.domain.metadata.objects import (
+    CustomField,
+    CustomObject,
+    FieldSet,
+    FieldSetItem,
+    PicklistValue,
+    SharingModel,
+    ValidationRule,
+)
+from sfir_backend.domain.metadata.profiles import (
+    ApexClassPermission,
+    FieldPermission,
+    ObjectPermission,
+    PagePermission,
+    PermissionSet,
+    Profile,
+    UserPermission,
+)
+from sfir_backend.domain.metadata.security import (
+    Queue,
+    Role,
+    SharingCriteriaRule,
+    SharingOwnerRule,
+    SharingRule,
+)
+from sfir_backend.domain.metadata.workflows import (
+    WorkflowAction,
+    WorkflowAlert,
+    WorkflowFieldUpdate,
+    WorkflowOutboundMessage,
+    WorkflowRule,
+    WorkflowTask,
+)
+
+__all__ = [
+    "ApexClass",
+    "ApexClassPermission",
+    "ApexComponent",
+    "ApexPage",
+    "ApexTrigger",
+    "CanonicalMetadata",
+    "CustomField",
+    "CustomObject",
+    "Dashboard",
+    "DashboardComponent",
+    "Document",
+    "EmailTemplate",
+    "FieldPermission",
+    "FieldSet",
+    "FieldSetItem",
+    "FieldType",
+    "Flow",
+    "FlowElement",
+    "FlowStage",
+    "FlowVariable",
+    "Layout",
+    "LayoutItem",
+    "LayoutSection",
+    "MetadataComponentRef",
+    "MiniLayout",
+    "ObjectFieldRef",
+    "ObjectPermission",
+    "PagePermission",
+    "PermissionSet",
+    "PicklistValue",
+    "Profile",
+    "Queue",
+    "RecordTypeVisibility",
+    "RelatedListItem",
+    "Report",
+    "Role",
+    "SharingCriteriaRule",
+    "SharingModel",
+    "SharingOwnerRule",
+    "SharingRule",
+    "StaticResource",
+    "UserPermission",
+    "ValidationRule",
+    "WorkflowAction",
+    "WorkflowAlert",
+    "WorkflowFieldUpdate",
+    "WorkflowOutboundMessage",
+    "WorkflowRule",
+    "WorkflowTask",
+]
