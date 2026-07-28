@@ -1,0 +1,185 @@
+# ────────────────────────────────────────────────────────────
+# SFIR Backend — Production Docker Compose
+# For production-like local validation
+# ────────────────────────────────────────────────────────────
+
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: sfir-pg-prod
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: sfir
+      POSTGRES_USER: sfir
+      POSTGRES_PASSWORD: ${SFIR_DB_PASSWORD:-sfir}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sfir"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    logging: *default-logging
+    networks:
+      - sfir-prod
+
+  redis:
+    image: redis:7-alpine
+    container_name: sfir-redis-prod
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --save 60 1 --save 300 10 --maxmemory 2gb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    logging: *default-logging
+    networks:
+      - sfir-prod
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    image: sfir-backend:${SFIR_VERSION:-latest}
+    container_name: sfir-api-prod
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      SFIR_ENVIRONMENT: ${SFIR_ENVIRONMENT:-production}
+      SFIR_DATABASE_URL: postgresql+asyncpg://sfir:${SFIR_DB_PASSWORD:-sfir}@postgres:5432/sfir
+      SFIR_REDIS_URL: redis://redis:6379/0
+      SFIR_CELERY_BROKER_URL: redis://redis:6379/1
+      SFIR_CELERY_RESULT_BACKEND: redis://redis:6379/2
+      SFIR_JWT_SECRET_KEY: ${SFIR_JWT_SECRET_KEY}
+      SFIR_ENCRYPTION_KEY: ${SFIR_ENCRYPTION_KEY}
+      SFIR_OTLP_ENDPOINT: http://otel-collector:4317
+      SFIR_LOG_LEVEL: ${SFIR_LOG_LEVEL:-INFO}
+      SFIR_LOG_FORMAT: json
+      SFIR_CORS_ORIGINS: ${SFIR_CORS_ORIGINS:-https://app.sfir.dev}
+      SFIR_DATABASE_POOL_SIZE: "20"
+      SFIR_DATABASE_MAX_OVERFLOW: "40"
+      SFIR_RATE_LIMIT_DEFAULT: "2000"
+      SFIR_OPENAI_API_KEY: ${SFIR_OPENAI_API_KEY}
+      SFIR_ANTHROPIC_API_KEY: ${SFIR_ANTHROPIC_API_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health/live')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+    logging: *default-logging
+    networks:
+      - sfir-prod
+
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    image: sfir-backend:${SFIR_VERSION:-latest}
+    container_name: sfir-worker-prod
+    restart: unless-stopped
+    command: celery -A sfir_backend.workers.celery worker --loglevel=info --concurrency=8 --queues=default,metadata,graph,ai --max-tasks-per-child=1000 --max-memory-per-child=500000
+    environment:
+      SFIR_ENVIRONMENT: ${SFIR_ENVIRONMENT:-production}
+      SFIR_DATABASE_URL: postgresql+asyncpg://sfir:${SFIR_DB_PASSWORD:-sfir}@postgres:5432/sfir
+      SFIR_REDIS_URL: redis://redis:6379/0
+      SFIR_CELERY_BROKER_URL: redis://redis:6379/1
+      SFIR_CELERY_RESULT_BACKEND: redis://redis:6379/2
+      SFIR_OTLP_ENDPOINT: http://otel-collector:4317
+      SFIR_LOG_LEVEL: ${SFIR_LOG_LEVEL:-INFO}
+      SFIR_LOG_FORMAT: json
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 4G
+        reservations:
+          cpus: "1"
+          memory: 1G
+    logging: *default-logging
+    networks:
+      - sfir-prod
+
+  celery-beat:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    image: sfir-backend:${SFIR_VERSION:-latest}
+    container_name: sfir-beat-prod
+    restart: unless-stopped
+    command: celery -A sfir_backend.workers.celery beat --loglevel=info
+    environment:
+      SFIR_ENVIRONMENT: ${SFIR_ENVIRONMENT:-production}
+      SFIR_DATABASE_URL: postgresql+asyncpg://sfir:${SFIR_DB_PASSWORD:-sfir}@postgres:5432/sfir
+      SFIR_REDIS_URL: redis://redis:6379/0
+      SFIR_CELERY_BROKER_URL: redis://redis:6379/1
+      SFIR_CELERY_RESULT_BACKEND: redis://redis:6379/2
+      SFIR_OTLP_ENDPOINT: http://otel-collector:4317
+      SFIR_LOG_LEVEL: ${SFIR_LOG_LEVEL:-INFO}
+      SFIR_LOG_FORMAT: json
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    logging: *default-logging
+    networks:
+      - sfir-prod
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.112.0
+    container_name: sfir-otel-prod
+    restart: unless-stopped
+    command: ["--config=/etc/otel-collector.yml"]
+    volumes:
+      - ./docker/otel-collector.yml:/etc/otel-collector.yml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+    logging: *default-logging
+    networks:
+      - sfir-prod
+
+volumes:
+  pg-data:
+    driver: local
+  redis-data:
+    driver: local
+
+networks:
+  sfir-prod:
+    name: sfir-prod
+    driver: bridge

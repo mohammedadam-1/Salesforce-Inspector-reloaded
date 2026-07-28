@@ -1,0 +1,17 @@
+apiVersion: v2
+name: sfir-backend
+description: A Helm chart for deploying SFIR Backend on Kubernetes
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - salesforce
+  - metadata
+  - inspection
+  - ai
+home: https://github.com/sfir/sfir-backend
+sources:
+  - https://github.com/sfir/sfir-backend
+maintainers:
+  - name: SFIR Team
+    email: team@sfir.dev

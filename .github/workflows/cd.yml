@@ -1,0 +1,164 @@
+name: Backend CD
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Deployment environment"
+        required: true
+        default: "staging"
+        type: choice
+        options:
+          - staging
+          - production
+
+permissions:
+  contents: read
+  packages: write
+
+defaults:
+  run:
+    working-directory: backend
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=,suffix=,format=short
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          file: backend/Dockerfile.prod
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Generate SBOM
+        uses: aquasecurity/trivy-action@0.29.0
+        with:
+          scan-type: image
+          scan-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
+          format: spdx-json
+          output: sbom.spdx.json
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.spdx.json
+
+  deploy-staging:
+    name: Deploy to Staging
+    if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.environment == 'staging'
+    needs: [release]
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: https://staging.api.sfir.dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: "latest"
+
+      - name: Configure Kubeconfig
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBECONFIG_STAGING }}" | base64 -d > $HOME/.kube/config
+
+      - name: Update image tag
+        run: |
+          kubectl -n sfir-staging set image deployment/sfir-api \
+            api=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      - name: Verify deployment
+        run: |
+          kubectl -n sfir-staging rollout status deployment/sfir-api --timeout=5m
+
+      - name: Run smoke tests
+        run: |
+          curl -f --retry 10 --retry-delay 5 --retry-max-time 60 \
+            https://staging.api.sfir.dev/api/v1/health/live
+          curl -f --retry 5 --retry-delay 5 \
+            https://staging.api.sfir.dev/api/v1/health/ready
+
+  deploy-production:
+    name: Deploy to Production
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [deploy-staging]
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://api.sfir.dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: "latest"
+
+      - name: Configure Kubeconfig
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBECONFIG_PRODUCTION }}" | base64 -d > $HOME/.kube/config
+
+      - name: Update image tag
+        run: |
+          kubectl -n sfir set image deployment/sfir-api \
+            api=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      - name: Rolling update with pause
+        run: |
+          kubectl -n sfir set image deployment/sfir-api \
+            api=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          kubectl -n sfir rollout status deployment/sfir-api --timeout=10m
+
+      - name: Run smoke tests
+        run: |
+          curl -f --retry 10 --retry-delay 5 --retry-max-time 60 \
+            https://api.sfir.dev/api/v1/health/live
+          curl -f --retry 5 --retry-delay 5 \
+            https://api.sfir.dev/api/v1/health/ready
+
+      - name: Post-deployment health check
+        run: |
+          sleep 30
+          curl -f https://api.sfir.dev/api/v1/health/status

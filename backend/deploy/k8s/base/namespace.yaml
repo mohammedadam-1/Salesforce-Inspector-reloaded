@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sfir
+  labels:
+    name: sfir
+    environment: production
+    app.kubernetes.io/name: sfir-backend
+    app.kubernetes.io/part-of: sfir

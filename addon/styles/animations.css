@@ -1,0 +1,219 @@
+/* ══════════════════════════════════════════════════════════════
+   Inspector AI — Animations
+   Version: 1.0.0
+   ══════════════════════════════════════════════════════════════
+   All animations respect prefers-reduced-motion.
+   No decorative animations. Every animation has a purpose.
+   ══════════════════════════════════════════════════════════════ */
+
+/* ──────────────────────────────────────────────
+   Shimmer (Loading Skeleton)
+   ────────────────────────────────────────────── */
+
+@keyframes ai-shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(200%);
+  }
+}
+
+/* ──────────────────────────────────────────────
+   Bounce Dot (Typing Indicator)
+   ────────────────────────────────────────────── */
+
+@keyframes ai-bounce-dot {
+  0%, 80%, 100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+  40% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
+/* ──────────────────────────────────────────────
+   Pulse Glow (Context Indicator)
+   ────────────────────────────────────────────── */
+
+@keyframes ai-pulse-glow {
+  0%, 100% {
+    box-shadow: 0 0 4px var(--ai-accent-glow);
+    opacity: 0.8;
+  }
+  50% {
+    box-shadow: 0 0 10px var(--ai-accent-glow);
+    opacity: 1;
+  }
+}
+
+/* ──────────────────────────────────────────────
+   Fade In (Message Appearance)
+   ────────────────────────────────────────────── */
+
+@keyframes ai-fade-in {
+  0% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.ai-fade-in {
+  animation: ai-fade-in var(--ai-transition-normal) both;
+}
+
+/* ──────────────────────────────────────────────
+   Fade In Up (Staggered children)
+   ────────────────────────────────────────────── */
+
+@keyframes ai-fade-in-up {
+  0% {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.ai-fade-in-up {
+  animation: ai-fade-in-up var(--ai-transition-slow) both;
+}
+
+.ai-fade-in-up:nth-child(1) { animation-delay: 0ms; }
+.ai-fade-in-up:nth-child(2) { animation-delay: 50ms; }
+.ai-fade-in-up:nth-child(3) { animation-delay: 100ms; }
+.ai-fade-in-up:nth-child(4) { animation-delay: 150ms; }
+.ai-fade-in-up:nth-child(5) { animation-delay: 200ms; }
+
+/* ──────────────────────────────────────────────
+   Scale In (Quick Search Overlay)
+   ────────────────────────────────────────────── */
+
+@keyframes ai-scale-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.ai-scale-in {
+  animation: ai-scale-in var(--ai-transition-fast) both;
+}
+
+/* ──────────────────────────────────────────────
+   Slide In Right (Side Panel)
+   ────────────────────────────────────────────── */
+
+@keyframes ai-slide-in-right {
+  0% {
+    transform: translateX(100%);
+  }
+  100% {
+    transform: translateX(0);
+  }
+}
+
+@keyframes ai-slide-out-right {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.ai-slide-in-right {
+  animation: ai-slide-in-right var(--ai-transition-enter) both;
+}
+
+.ai-slide-out-right {
+  animation: ai-slide-out-right var(--ai-transition-exit) both;
+}
+
+/* ──────────────────────────────────────────────
+   Content Stagger (Panel sections)
+   ────────────────────────────────────────────── */
+
+@keyframes ai-content-stagger {
+  0% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ──────────────────────────────────────────────
+   Notification Badge (Brief highlight)
+   ────────────────────────────────────────────── */
+
+@keyframes ai-highlight-pulse {
+  0% {
+    background-color: var(--ai-accent-subtle);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+.ai-highlight-pulse {
+  animation: ai-highlight-pulse 1s ease-out both;
+}
+
+/* ──────────────────────────────────────────────
+   Spinner (Loading indicator)
+   ────────────────────────────────────────────── */
+
+@keyframes ai-spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.ai-spin {
+  animation: ai-spin 1s linear infinite;
+}
+
+/* ──────────────────────────────────────────────
+   Reduced Motion — Disable All Animations
+   ────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .ai-slide-in-right,
+  .ai-slide-out-right {
+    animation: none !important;
+  }
+
+  .ai-fade-in,
+  .ai-fade-in-up,
+  .ai-scale-in {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}

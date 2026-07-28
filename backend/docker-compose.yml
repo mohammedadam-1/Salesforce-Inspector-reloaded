@@ -1,0 +1,111 @@
+# ────────────────────────────────────────────────────────────
+# SFIR Backend — Docker Compose (Full Stack)
+# ────────────────────────────────────────────────────────────
+
+include:
+  - docker-compose.infra.yml
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    image: sfir-backend:latest
+    container_name: sfir-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      SFIR_ENVIRONMENT: ${SFIR_ENVIRONMENT:-development}
+      SFIR_DATABASE_URL: postgresql+asyncpg://sfir:sfir@postgres:5432/sfir
+      SFIR_REDIS_URL: redis://redis:6379/0
+      SFIR_CELERY_BROKER_URL: redis://redis:6379/1
+      SFIR_CELERY_RESULT_BACKEND: redis://redis:6379/2
+      SFIR_JWT_SECRET_KEY: ${SFIR_JWT_SECRET_KEY:-dev-jwt-secret-change-in-production}
+      SFIR_ENCRYPTION_KEY: ${SFIR_ENCRYPTION_KEY:-dev-encryption-key-change-in-production-32bytes}
+      SFIR_OTLP_ENDPOINT: http://otel-collector:4317
+      SFIR_LOG_LEVEL: ${SFIR_LOG_LEVEL:-DEBUG}
+      SFIR_LOG_FORMAT: console
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src:ro
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/api/v1/health/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - sfir-network
+    profiles:
+      - full
+      - api-only
+
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    image: sfir-backend:latest
+    container_name: sfir-celery-worker
+    restart: unless-stopped
+    command: celery -A sfir_backend.workers.celery worker --loglevel=info --concurrency=4 --queues=default,metadata,graph,ai
+    environment:
+      SFIR_ENVIRONMENT: ${SFIR_ENVIRONMENT:-development}
+      SFIR_DATABASE_URL: postgresql+asyncpg://sfir:sfir@postgres:5432/sfir
+      SFIR_REDIS_URL: redis://redis:6379/0
+      SFIR_CELERY_BROKER_URL: redis://redis:6379/1
+      SFIR_CELERY_RESULT_BACKEND: redis://redis:6379/2
+      SFIR_JWT_SECRET_KEY: ${SFIR_JWT_SECRET_KEY:-dev-jwt-secret-change-in-production}
+      SFIR_ENCRYPTION_KEY: ${SFIR_ENCRYPTION_KEY:-dev-encryption-key-change-in-production-32bytes}
+      SFIR_OTLP_ENDPOINT: http://otel-collector:4317
+      SFIR_LOG_LEVEL: ${SFIR_LOG_LEVEL:-DEBUG}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src:ro
+    networks:
+      - sfir-network
+    profiles:
+      - full
+
+  celery-beat:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    image: sfir-backend:latest
+    container_name: sfir-celery-beat
+    restart: unless-stopped
+    command: celery -A sfir_backend.workers.celery beat --loglevel=info
+    environment:
+      SFIR_ENVIRONMENT: ${SFIR_ENVIRONMENT:-development}
+      SFIR_DATABASE_URL: postgresql+asyncpg://sfir:sfir@postgres:5432/sfir
+      SFIR_REDIS_URL: redis://redis:6379/0
+      SFIR_CELERY_BROKER_URL: redis://redis:6379/1
+      SFIR_CELERY_RESULT_BACKEND: redis://redis:6379/2
+      SFIR_JWT_SECRET_KEY: ${SFIR_JWT_SECRET_KEY:-dev-jwt-secret-change-in-production}
+      SFIR_ENCRYPTION_KEY: ${SFIR_ENCRYPTION_KEY:-dev-encryption-key-change-in-production-32bytes}
+      SFIR_OTLP_ENDPOINT: http://otel-collector:4317
+      SFIR_LOG_LEVEL: ${SFIR_LOG_LEVEL:-DEBUG}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src:ro
+    networks:
+      - sfir-network
+    profiles:
+      - full
+
+networks:
+  sfir-network:
+    name: sfir-network
+    driver: bridge
