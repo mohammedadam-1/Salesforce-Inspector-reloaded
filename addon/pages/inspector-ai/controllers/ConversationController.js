@@ -1,17 +1,9 @@
-/* global React */
 import ConversationState from "../state/conversationState.js";
 import ChatState from "../state/chatState.js";
 import * as conv from "../../../services/conversationService.js";
 
-export default function useConversations() {
-  const [state, setState] = React.useState(ConversationState.getState());
-
-  React.useEffect(() => {
-    const unsub = ConversationState.subscribe(setState);
-    return unsub;
-  }, []);
-
-  const loadConversations = React.useCallback(async () => {
+const ConversationController = {
+  loadConversations() {
     ConversationState.setLoading(true);
     ConversationState.clearError();
     try {
@@ -22,9 +14,9 @@ export default function useConversations() {
     } finally {
       ConversationState.setLoading(false);
     }
-  }, []);
+  },
 
-  const selectConversation = React.useCallback(async (id) => {
+  async selectConversation(id) {
     ConversationState.setActiveId(id);
     conv.setActiveConversation(id);
     ChatState.setLoading(true);
@@ -39,12 +31,11 @@ export default function useConversations() {
     } finally {
       ChatState.setLoading(false);
     }
-  }, []);
+  },
 
-  const createConversation = React.useCallback(async (title, context) => {
+  async createConversation(title, context) {
     try {
       const convResult = await conv.createConversation(title || "New Conversation");
-      if (!convResult) return null;
       ConversationState.addConversation(convResult);
       ConversationState.setActiveId(convResult.id);
       ChatState.reset();
@@ -55,9 +46,9 @@ export default function useConversations() {
       ConversationState.setError(err.message || "Failed to create conversation");
       return null;
     }
-  }, []);
+  },
 
-  const deleteConversation = React.useCallback(async (id) => {
+  async deleteConversation(id) {
     try {
       await conv.deleteConversation(id);
       ConversationState.removeConversation(id);
@@ -67,31 +58,22 @@ export default function useConversations() {
     } catch (err) {
       ConversationState.setError(err.message || "Failed to delete conversation");
     }
-  }, []);
+  },
 
-  const renameConversation = React.useCallback(async (id, title) => {
+  async renameConversation(id, title) {
     try {
       await conv.renameConversation(id, title);
       ConversationState.updateConversation(id, {title});
     } catch (err) {
       ConversationState.setError(err.message || "Failed to rename conversation");
     }
-  }, []);
+  },
 
-  React.useEffect(() => {
-    conv.init().then(() => loadConversations());
-  }, [loadConversations]);
+  init() {
+    conv.init().then(() => {
+      this.loadConversations();
+    });
+  },
+};
 
-  return {
-    state,
-    conversations: state.conversations,
-    activeId: state.activeId,
-    isLoading: state.isLoading,
-    error: state.error,
-    loadConversations,
-    selectConversation,
-    createConversation,
-    deleteConversation,
-    renameConversation,
-  };
-}
+export default ConversationController;

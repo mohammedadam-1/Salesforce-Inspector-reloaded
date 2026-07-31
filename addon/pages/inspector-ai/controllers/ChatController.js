@@ -1,6 +1,5 @@
-/* global React */
 import ChatState from "../state/chatState.js";
-import {streamChat} from "../../../services/aiApiClient.js";
+import {isConfigured, streamChat} from "../../../services/aiApiClient.js";
 import * as conv from "../../../services/conversationService.js";
 
 function parseStreamChunk(chunk, handlers) {
@@ -12,7 +11,7 @@ function parseStreamChunk(chunk, handlers) {
     if (raw.startsWith("event: ")) {
       currentEvent = raw.slice(7).trim();
     } else if (raw.startsWith("data: ")) {
-      const payload = raw.slice(6);
+      const payload = raw.slice(6); 
       let data;
       try { data = JSON.parse(payload); } catch { data = payload; }
 
@@ -34,15 +33,14 @@ function parseStreamChunk(chunk, handlers) {
   }
 }
 
-export default function useChatState() {
-  const [state, setState] = React.useState(ChatState.getState());
+const ChatController = {
+  async sendMessage(content, sfContext) {
+    if (!isConfigured()) {
+      ChatState.setError("Backend not configured. Set the backend URL and API key to start chatting.");
+      ChatState.setProcessing(false);
+      return;
+    }
 
-  React.useEffect(() => {
-    const unsub = ChatState.subscribe(setState);
-    return unsub;
-  }, []);
-
-  const submitMessage = React.useCallback(async (content, sfContext) => {
     ChatState.submitMessage(content);
 
     let activeId = conv.getActiveConversationId();
@@ -116,7 +114,7 @@ export default function useChatState() {
             },
             onToolStart: (d) => {
               ChatState.addToolExecution({
-                id: d.execution_id || `exec_${Date.now()}`,
+                id: d.execution_id || "exec_" + Date.now(),
                 tool: d.tool || d.name || "unknown",
                 input: d.input,
                 status: "running",
@@ -143,20 +141,23 @@ export default function useChatState() {
                 error: d.error || "Tool execution failed",
               });
             },
-            onCitation: (d) => {
+            onCitation(d) {
+              let msgs = ChatState.messages;
+              let lastMsg = msgs[msgs.length - 1];
+              let existing = lastMsg && lastMsg.citations ? lastMsg.citations : [];
               ChatState.updateLastMessage({
-                citations: [...(ChatState.state?.messages?.[ChatState.state.messages.length - 1]?.citations || []), {
+                citations: existing.concat([{
                   title: d.title || d.name || "Reference",
                   type: d.type || "reference",
-                  id: d.id || d.url || `ref_${Date.now()}`,
+                  id: d.id || d.url || "ref_" + Date.now(),
                   url: d.url,
-                }],
+                }]),
               });
             },
           });
         },
-        onEvent: (event, data) => {
-          if (event === "token" && data?.token) {
+        onEvent(event, data) {
+          if (event === "token" && data && data.token) {
             if (!ChatState.streamingMessage) {
               ChatState.setStreaming(true, {
                 role: "assistant",
@@ -173,14 +174,13 @@ export default function useChatState() {
             }
           }
         },
-        onDone: () => {
-          const finalMsg = ChatState.streamingMessage;
-          if (finalMsg) {
+        onDone() {
+          if (ChatState.streamingMessage) {
             ChatState.finalizeStreaming();
           }
           ChatState.setProcessing(false);
         },
-        onError: (err) => {
+        onError(err) {
           ChatState.setStreaming(false, null);
           ChatState.setProcessing(false);
           ChatState.setError(err.message || "Stream error");
@@ -201,37 +201,23 @@ export default function useChatState() {
       ChatState.setProcessing(false);
       ChatState.setError(e.message || "Failed to send message");
     }
-  }, []);
+  },
 
-  const clearChat = React.useCallback(() => {
-    ChatState.reset();
-  }, []);
-
-  const retry = React.useCallback(async () => {
+  retry() {
     const msgs = ChatState.messages;
-    const lastUser = [...msgs].reverse().find((m) => m.role === "user");
+    const lastUser = msgs.slice().reverse().find((m) => m.role === "user");
     if (lastUser) {
       ChatState.setError(null);
       ChatState.setProcessing(false);
       const activeId = conv.getActiveConversationId();
       if (activeId) conv.deleteLastUserAndAssistant(activeId);
-      await submitMessage(lastUser.content, ChatState.context);
+      this.sendMessage(lastUser.content, ChatState.context);
     }
-  }, [submitMessage]);
+  },
 
-  return {
-    state,
-    submitMessage,
-    clearChat,
-    retry,
-    messages: state.messages,
-    isStreaming: state.isStreaming,
-    streamingMessage: state.streamingMessage,
-    error: state.error,
-    isLoading: state.isLoading,
-    isProcessing: state.isProcessing,
-    suggestedQuestions: state.suggestedQuestions,
-    toolExecutions: state.toolExecutions,
-    activeConversationId: state.activeConversationId,
-  };
-}
+  clearChat() {
+    ChatState.reset();
+  },
+};
+
+export default ChatController;

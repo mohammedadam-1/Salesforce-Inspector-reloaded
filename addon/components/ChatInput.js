@@ -1,18 +1,19 @@
+/* eslint-disable react/prop-types */
 /* global React */
 const h = React.createElement;
 
 class ChatInput extends React.PureComponent {
   constructor(props) {
     super(props);
-    this.state = { value: "" };
-    this.textRef = React.createRef();
+    this.state = {value: ""};
+    this.textRef = null;
     this.onChange = this.onChange.bind(this);
     this.onKeyDown = this.onKeyDown.bind(this);
     this.onSend = this.onSend.bind(this);
   }
 
   onChange(e) {
-    this.setState({ value: e.target.value });
+    this.setState({value: e.target.value});
     const el = e.target;
     el.style.height = "auto";
     el.style.height = Math.min(el.scrollHeight, 80) + "px";
@@ -28,28 +29,28 @@ class ChatInput extends React.PureComponent {
   onSend() {
     if (this.state.value.trim() && !this.props.disabled) {
       this.props.onSend(this.state.value);
-      this.setState({ value: "" });
-      if (this.textRef.current) {
-        this.textRef.current.style.height = "auto";
+      this.setState({value: ""});
+      if (this.textRef) {
+        this.textRef.style.height = "auto";
       }
     }
   }
 
   focus() {
-    if (this.textRef.current) {
-      this.textRef.current.focus();
+    if (this.textRef) {
+      this.textRef.focus();
     }
   }
 
   render() {
-    const { disabled, placeholder } = this.props;
-    const { value } = this.state;
+    const {disabled, placeholder} = this.props;
+    const {value} = this.state;
     const hasText = value.trim().length > 0;
 
-    return h("div", { className: "ai-chat-input-area" },
-      h("div", { className: "ai-chat-input-wrapper" },
+    return h("div", {className: "ai-chat-input-area"},
+      h("div", {className: "ai-chat-input-wrapper"},
         h("textarea", {
-          ref: this.textRef,
+          ref: (el) => { this.textRef = el; },
           className: "ai-chat-input",
           placeholder: placeholder || "Ask anything...",
           value,
@@ -65,10 +66,10 @@ class ChatInput extends React.PureComponent {
           disabled: !hasText || disabled,
           "aria-label": "Send message",
         },
-          h("svg", { width: "16", height: "16", viewBox: "0 0 16 16", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round" },
-            h("path", { d: "M2 8l12-5-5 12-3-4z" }),
-            h("path", { d: "M9 7l-3 4" })
-          )
+        h("svg", {width: "16", height: "16", viewBox: "0 0 16 16", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round"},
+          h("path", {d: "M2 8l12-5-5 12-3-4z"}),
+          h("path", {d: "M9 7l-3 4"})
+        )
         )
       )
     );

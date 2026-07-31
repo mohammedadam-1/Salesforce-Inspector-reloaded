@@ -14,89 +14,104 @@ function formatDate(iso) {
   return d.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
-function ConversationItem({ conv, isActive, onSelect, onDelete, onRename }) {
-  const [editing, setEditing] = React.useState(false);
-  const [editValue, setEditValue] = React.useState(conv.title || "Untitled");
-  const inputRef = React.useRef(null);
+class ConversationItem extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = {
+      editing: false,
+      editValue: props.conv.title || "Untitled",
+    };
+    this.inputRef = null;
+    this.setInputRef = (el) => { this.inputRef = el; };
+    this.startEdit = this.startEdit.bind(this);
+    this.commitEdit = this.commitEdit.bind(this);
+    this.handleKeyDown = this.handleKeyDown.bind(this);
+  }
 
-  React.useEffect(() => {
-    if (editing && inputRef.current) {
-      inputRef.current.focus();
-      inputRef.current.select();
+  componentDidUpdate(prevProps, prevState) {
+    if (!prevState.editing && this.state.editing && this.inputRef) {
+      this.inputRef.focus();
+      this.inputRef.select();
     }
-  }, [editing]);
+  }
 
-  function startEdit(e) {
+  startEdit(e) {
     e.stopPropagation();
-    setEditValue(conv.title || "Untitled");
-    setEditing(true);
+    this.setState({
+      editValue: this.props.conv.title || "Untitled",
+      editing: true,
+    });
   }
 
-  function commitEdit() {
-    const trimmed = editValue.trim();
-    if (trimmed && trimmed !== conv.title) {
-      onRename(conv.id, trimmed);
+  commitEdit() {
+    const trimmed = this.state.editValue.trim();
+    if (trimmed && trimmed !== this.props.conv.title) {
+      this.props.onRename(this.props.conv.id, trimmed);
     }
-    setEditing(false);
+    this.setState({ editing: false });
   }
 
-  function handleKeyDown(e) {
-    if (e.key === "Enter") { e.preventDefault(); commitEdit(); }
-    if (e.key === "Escape") { setEditing(false); }
+  handleKeyDown(e) {
+    if (e.key === "Enter") { e.preventDefault(); this.commitEdit(); }
+    if (e.key === "Escape") { this.setState({ editing: false }); }
   }
 
-  const msgCount = conv.messages?.length || 0;
+  render() {
+    const { conv, isActive, onSelect, onDelete } = this.props;
+    const { editing, editValue } = this.state;
+    const msgCount = conv.messages?.length || 0;
 
-  return h("div", {
-    className: "ai-conv-item" + (isActive ? " ai-conv-active" : ""),
-    onClick: () => onSelect(conv.id),
-    role: "button",
-    tabIndex: 0,
-    onKeyDown: (e) => { if (e.key === "Enter") onSelect(conv.id); },
-    "aria-label": conv.title || "Conversation",
-  },
-    h("div", { className: "ai-conv-item-content" },
-      editing
-        ? h("input", {
-            ref: inputRef,
-            className: "ai-conv-edit-input",
-            value: editValue,
-            onChange: (e) => setEditValue(e.target.value),
-            onBlur: commitEdit,
-            onKeyDown: handleKeyDown,
-            onClick: (e) => e.stopPropagation(),
-          })
-        : h("div", { className: "ai-conv-title", title: conv.title },
-            conv.title || "Untitled"
-          ),
-      h("div", { className: "ai-conv-meta" },
-        h("span", null, msgCount + " messages"),
-        h("span", null, formatDate(conv.updatedAt))
+    return h("div", {
+      className: "ai-conv-item" + (isActive ? " ai-conv-active" : ""),
+      onClick: () => onSelect(conv.id),
+      role: "button",
+      tabIndex: 0,
+      onKeyDown: (e) => { if (e.key === "Enter") onSelect(conv.id); },
+      "aria-label": conv.title || "Conversation",
+    },
+      h("div", { className: "ai-conv-item-content" },
+        editing
+          ? h("input", {
+              ref: this.setInputRef,
+              className: "ai-conv-edit-input",
+              value: editValue,
+              onChange: (e) => this.setState({ editValue: e.target.value }),
+              onBlur: this.commitEdit,
+              onKeyDown: this.handleKeyDown,
+              onClick: (e) => e.stopPropagation(),
+            })
+          : h("div", { className: "ai-conv-title", title: conv.title },
+              conv.title || "Untitled"
+            ),
+        h("div", { className: "ai-conv-meta" },
+          h("span", null, msgCount + " messages"),
+          h("span", null, formatDate(conv.updatedAt))
+        )
+      ),
+      h("div", { className: "ai-conv-actions" },
+        h("button", {
+          className: "ai-conv-action-btn",
+          onClick: this.startEdit,
+          title: "Rename",
+          "aria-label": "Rename conversation",
+        },
+          h("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" },
+            h("path", { d: "M8.5 1.5l2 2L4 10H2V8l6.5-6.5z" })
+          )
+        ),
+        h("button", {
+          className: "ai-conv-action-btn ai-conv-action-delete",
+          onClick: (e) => { e.stopPropagation(); onDelete(conv.id); },
+          title: "Delete",
+          "aria-label": "Delete conversation",
+        },
+          h("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" },
+            h("path", { d: "M2 3h8M4.5 3V2a1 1 0 011-1h1a1 1 0 011 1v1M3 3v7a1 1 0 001 1h4a1 1 0 001-1V3" })
+          )
+        ),
       )
-    ),
-    h("div", { className: "ai-conv-actions" },
-      h("button", {
-        className: "ai-conv-action-btn",
-        onClick: startEdit,
-        title: "Rename",
-        "aria-label": "Rename conversation",
-      },
-        h("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" },
-          h("path", { d: "M8.5 1.5l2 2L4 10H2V8l6.5-6.5z" })
-        )
-      ),
-      h("button", {
-        className: "ai-conv-action-btn ai-conv-action-delete",
-        onClick: (e) => { e.stopPropagation(); onDelete(conv.id); },
-        title: "Delete",
-        "aria-label": "Delete conversation",
-      },
-        h("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" },
-          h("path", { d: "M2 3h8M4.5 3V2a1 1 0 011-1h1a1 1 0 011 1v1M3 3v7a1 1 0 001 1h4a1 1 0 001-1V3" })
-        )
-      ),
-    )
-  );
+    );
+  }
 }
 
 export default function ConversationList({ conversations, activeId, onSelect, onNew, onDelete, onRename, onClose }) {

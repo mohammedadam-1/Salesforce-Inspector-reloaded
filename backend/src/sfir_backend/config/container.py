@@ -8,6 +8,8 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
 )
 
+from sfir_backend.infrastructure.security.rate_limiter import RateLimiter
+
 from sfir_backend.application.cache.services import (
     AutocompleteCacheService,
     ConnectionStatusCacheService,
@@ -388,6 +390,7 @@ class Container:
         self._services["jwt"] = JWTService(self._settings)
         self._services["oauth"] = SalesforceOAuthService(self._settings)
         self._services["encryption"] = EncryptionService(self._settings)
+        self._services["rate_limiter"] = RateLimiter(self._settings)
         self._register_security()
 
     def _register_security(self) -> None:

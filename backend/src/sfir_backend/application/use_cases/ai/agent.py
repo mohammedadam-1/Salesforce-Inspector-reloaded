@@ -5,6 +5,7 @@ from typing import Any
 from sfir_backend.application.use_cases.ai.tools import AgentTool, ToolRegistry
 from sfir_backend.application.use_cases.graph.service import GraphService
 from sfir_backend.domain.graph.models import DependencyGraph
+from sfir_backend.domain.request_context import RequestContext
 from sfir_backend.infrastructure.llm.providers.base import (
     BaseLLMProvider,
     LLMMessage,
@@ -43,7 +44,13 @@ class QueryMetadataTool(AgentTool):
             "required": ["component_type"],
         }
 
-    async def execute(self, component_type: str, name_pattern: str = "") -> str:
+    async def execute(
+        self,
+        component_type: str,
+        name_pattern: str = "",
+        request_context: RequestContext | None = None,
+    ) -> str:
+        _ = request_context
         if not self._graph:
             return "Graph not available. Build the graph first."
         if not component_type:
@@ -91,7 +98,14 @@ class AnalyzeDependenciesTool(AgentTool):
             "required": ["component_type", "component_name"],
         }
 
-    async def execute(self, component_type: str, component_name: str, depth: int = 1) -> str:
+    async def execute(
+        self,
+        component_type: str,
+        component_name: str,
+        depth: int = 1,
+        request_context: RequestContext | None = None,
+    ) -> str:
+        _ = request_context
         if not self._graph:
             return "Graph not available. Build the graph first."
         deps = await self._graph_service.get_node_dependencies(
@@ -140,7 +154,14 @@ class FindImpactTool(AgentTool):
             "required": ["component_type", "component_name"],
         }
 
-    async def execute(self, component_type: str, component_name: str, max_depth: int = 3) -> str:
+    async def execute(
+        self,
+        component_type: str,
+        component_name: str,
+        max_depth: int = 3,
+        request_context: RequestContext | None = None,
+    ) -> str:
+        _ = request_context
         if not self._graph:
             return "Graph not available. Build the graph first."
         impacted = await self._graph_service.find_impact(
@@ -177,7 +198,11 @@ class GraphSummaryTool(AgentTool):
             "required": [],
         }
 
-    async def execute(self) -> str:
+    async def execute(
+        self,
+        request_context: RequestContext | None = None,
+    ) -> str:
+        _ = request_context
         if not self._graph:
             return "Graph not available. Build the graph first."
         summary = await self._graph_service.graph_summary(self._graph)

@@ -15,6 +15,7 @@ from sfir_backend.api.deps import (
     get_conversation_manager,
     get_current_org_id,
     get_current_user_id,
+    get_optional_request_context,
 )
 from sfir_backend.api.dto.ai import (
     AIResponseDTO,
@@ -34,6 +35,7 @@ from sfir_backend.application.use_cases.ai.orchestrator import AIOrchestrator
 from sfir_backend.application.use_cases.graph.service import GraphService
 from sfir_backend.config.container import Container
 from sfir_backend.domain.ai.models import AIFeature
+from sfir_backend.domain.request_context import RequestContext
 
 router = APIRouter(prefix="/ai", tags=["ai"])
 
@@ -212,6 +214,7 @@ async def send_conversation_message(
     req: SendMessageRequest,
     org_id: uuid.UUID | None = Depends(get_current_org_id),
     user_id: uuid.UUID = Depends(get_current_user_id),
+    request_context: RequestContext = Depends(get_optional_request_context),
     container: Container = Depends(get_container),
 ) -> AIResponseDTO:
     if not org_id:
@@ -223,6 +226,7 @@ async def send_conversation_message(
         user_id=user_id,
         conversation_id=conversation_id,
         feature=AIFeature.QUESTION_ANSWERING,
+        request_context=request_context if request_context.is_authenticated else None,
     )
     return _to_response_dto(response, conversation_id)
 
@@ -264,6 +268,7 @@ async def chat(
     req: ChatRequest,
     org_id: uuid.UUID | None = Depends(get_current_org_id),
     user_id: uuid.UUID = Depends(get_current_user_id),
+    request_context: RequestContext = Depends(get_optional_request_context),
     container: Container = Depends(get_container),
 ) -> AIResponseDTO | StreamingResponse:
     orchestrator: AIOrchestrator = container.get_use_case("ai_orchestrator")
@@ -283,6 +288,7 @@ async def chat(
             max_tokens=req.max_tokens,
             stream=False,
             feature=AIFeature(req.feature),
+            request_context=request_context if request_context.is_authenticated else None,
         )
         return _to_response_dto(response, conv_id or response.request_id)
 
@@ -304,6 +310,7 @@ async def chat(
             max_tokens=req.max_tokens,
             feature=AIFeature(req.feature),
             messages=req.messages,
+            request_context=request_context if request_context.is_authenticated else None,
         ):
             yield f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
 
@@ -323,6 +330,7 @@ async def explain(
     req: ExplainRequest,
     org_id: uuid.UUID | None = Depends(get_current_org_id),
     user_id: uuid.UUID = Depends(get_current_user_id),
+    request_context: RequestContext = Depends(get_optional_request_context),
     container: Container = Depends(get_container),
 ) -> AIResponseDTO:
     if not org_id:
@@ -335,6 +343,7 @@ async def explain(
         user_id=user_id,
         context=req.context,
         provider=req.provider,
+        request_context=request_context if request_context.is_authenticated else None,
     )
     return _to_response_dto(response)
 
@@ -344,6 +353,7 @@ async def summarize(
     req: SummarizeRequest,
     org_id: uuid.UUID | None = Depends(get_current_org_id),
     user_id: uuid.UUID = Depends(get_current_user_id),
+    request_context: RequestContext = Depends(get_optional_request_context),
     container: Container = Depends(get_container),
 ) -> AIResponseDTO:
     if not org_id:
@@ -355,6 +365,7 @@ async def summarize(
         organization_id=org_id,
         user_id=user_id,
         additional_context=req.additional_context,
+        request_context=request_context if request_context.is_authenticated else None,
     )
     return _to_response_dto(response)
 
@@ -364,6 +375,7 @@ async def generate_documentation(
     req: SummarizeRequest,
     org_id: uuid.UUID | None = Depends(get_current_org_id),
     user_id: uuid.UUID = Depends(get_current_user_id),
+    request_context: RequestContext = Depends(get_optional_request_context),
     container: Container = Depends(get_container),
 ) -> AIResponseDTO:
     if not org_id:
@@ -375,6 +387,7 @@ async def generate_documentation(
         organization_id=org_id,
         user_id=user_id,
         additional_context=req.additional_context,
+        request_context=request_context if request_context.is_authenticated else None,
     )
     return _to_response_dto(response)
 
@@ -384,6 +397,7 @@ async def generate_release_notes(
     req: SummarizeRequest,
     org_id: uuid.UUID | None = Depends(get_current_org_id),
     user_id: uuid.UUID = Depends(get_current_user_id),
+    request_context: RequestContext = Depends(get_optional_request_context),
     container: Container = Depends(get_container),
 ) -> AIResponseDTO:
     if not org_id:
@@ -395,6 +409,7 @@ async def generate_release_notes(
         organization_id=org_id,
         user_id=user_id,
         additional_context=req.additional_context,
+        request_context=request_context if request_context.is_authenticated else None,
     )
     return _to_response_dto(response)
 
@@ -404,6 +419,7 @@ async def ai_search(
     req: ChatRequest,
     org_id: uuid.UUID | None = Depends(get_current_org_id),
     user_id: uuid.UUID = Depends(get_current_user_id),
+    request_context: RequestContext = Depends(get_optional_request_context),
     container: Container = Depends(get_container),
 ) -> AIResponseDTO:
     if not org_id:
@@ -415,6 +431,7 @@ async def ai_search(
         user_id=user_id,
         provider=req.provider,
         feature=AIFeature.NATURAL_LANGUAGE_SEARCH,
+        request_context=request_context if request_context.is_authenticated else None,
     )
     return _to_response_dto(response)
 

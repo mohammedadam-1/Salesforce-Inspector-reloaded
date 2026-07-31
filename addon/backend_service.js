@@ -6,12 +6,31 @@ const BK = {
   ORG: "sfirBackendOrgId",
 };
 
+function normalizeBackendUrl(value) {
+  let url = (value || "").trim();
+  if (!url) return "";
+  if (url.startsWith("//")) url = "http:" + url;
+  if (/^0\.0\.0\.0(?::\d+)?(?:\/.*)?$/.test(url)) url = "http://" + url;
+
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname === "0.0.0.0") parsed.hostname = "localhost";
+    return parsed.toString().replace(/\/+$/, "");
+  } catch {
+    return url.replace(/\/+$/, "");
+  }
+}
+
 function getBackendConfig() {
   const url = localStorage.getItem(BK.URL);
   const apiKey = localStorage.getItem(BK.KEY);
   const organizationId = localStorage.getItem(BK.ORG);
   if (!url || !apiKey) return null;
-  return {url, apiKey, organizationId};
+  const normalizedUrl = normalizeBackendUrl(url);
+  if (normalizedUrl && normalizedUrl !== url) {
+    localStorage.setItem(BK.URL, normalizedUrl);
+  }
+  return {url: normalizedUrl, apiKey, organizationId};
 }
 
 export function isBackendConfigured() {
@@ -42,8 +61,7 @@ function buildUrl(baseUrl, path, queryParams) {
 }
 
 function buildHeaders(config, hasBody) {
-  const hdrs = {"X-API-Key": config.apiKey, "Accept": "application/json"};
-  if (config.organizationId) hdrs["X-Organization-ID"] = config.organizationId;
+  const hdrs = {"Authorization": "Bearer " + config.apiKey, "Accept": "application/json"};
   if (hasBody) hdrs["Content-Type"] = "application/json";
   return hdrs;
 }

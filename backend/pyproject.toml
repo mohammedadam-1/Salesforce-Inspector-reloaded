@@ -63,6 +63,7 @@ markers = [
     "unit: Unit tests (no external deps)",
     "integration: Integration tests (require DB/Redis)",
     "api: API endpoint tests",
+    "audit: Inspector AI readiness and grounding audit tests",
     "security: Security tests",
     "slow: Tests that take more than 5 seconds",
 ]

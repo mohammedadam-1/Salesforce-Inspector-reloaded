@@ -8,7 +8,7 @@ import Toast from "./components/Toast.js";
 import Tooltip from "./components/Tooltip.js";
 import ColorPicker from "./components/ColorPicker.js";
 import {PageHeader} from "./components/PageHeader.js";
-
+import InspectorAiBackendConfig from "./components/InspectorAiBackendConfig.js";
 class Model {
 
   constructor(sfHost) {
@@ -413,6 +413,13 @@ class OptionsTabSelector extends React.Component {
         content: [
           {option: Option, props: {type: "toggle", title: "Enable Agentforce Helper for formula fields", key: "showAgentforceHelperInspect", default: true, tooltip: "When enabled, shows the 'Agentforce Helper' link in the field actions menu for calculated/formula fields."}},
           {option: Option, props: {type: "text", title: "Formula Helper Prompt Template Name", key: this.sfHost + "_formulaAgentForcePrompt", default: "FormulaHelper", tooltip: "Developer name of the prompt template to use for Formula Field Analysis in the Inspect page"}},
+        ]
+      },
+      {
+        id: "inspector-ai-backend",
+        tabTitle: "Inspector AI",
+        content: [
+          {option: InspectorAiBackendConfig, props: {}}
         ]
       }
     ];

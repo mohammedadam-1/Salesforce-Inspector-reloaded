@@ -86,6 +86,7 @@ class AnthropicProvider(BaseLLMProvider):
     async def chat_stream(
         self,
         messages: list[LLMMessage],
+        tools: list[ToolDefinition] | None = None,
         temperature: float = 0.1,
         max_tokens: int = 4096,
     ) -> AsyncIterator[LLMStreamChunk]:

@@ -23,12 +23,31 @@ export const ConnectionStatus = Object.freeze({
   ERROR: "error",
 });
 
+function normalizeBackendUrl(value) {
+  let url = (value || "").trim();
+  if (!url) return "";
+  if (url.startsWith("//")) url = "http:" + url;
+  if (/^0\.0\.0\.0(?::\d+)?(?:\/.*)?$/.test(url)) url = "http://" + url;
+
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname === "0.0.0.0") parsed.hostname = "localhost";
+    return parsed.toString().replace(/\/+$/, "");
+  } catch {
+    return url.replace(/\/+$/, "");
+  }
+}
+
 export function getBackendConfig() {
   const url = localStorage.getItem(CONFIG_KEYS.URL);
   const apiKey = localStorage.getItem(CONFIG_KEYS.KEY);
   const organizationId = localStorage.getItem(CONFIG_KEYS.ORG);
   if (!url || !apiKey) return null;
-  return { url: url.replace(/\/+$/, ""), apiKey, organizationId };
+  const normalizedUrl = normalizeBackendUrl(url);
+  if (normalizedUrl && normalizedUrl !== url) {
+    localStorage.setItem(CONFIG_KEYS.URL, normalizedUrl);
+  }
+  return {url: normalizedUrl, apiKey, organizationId};
 }
 
 export function isConfigured() {
@@ -52,6 +71,17 @@ function _setStatus(status) {
   }
 }
 
+window.addEventListener("storage", (e) => {
+  if (e.key === CONFIG_KEYS.URL || e.key === CONFIG_KEYS.KEY) {
+    if (isConfigured()) {
+      _setStatus(ConnectionStatus.CONFIGURING);
+      health().catch(() => {});
+    } else {
+      _setStatus(ConnectionStatus.UNKNOWN);
+    }
+  }
+});
+
 function buildUrl(baseUrl, path, queryParams) {
   let url = `${baseUrl}${path}`;
   if (queryParams) {
@@ -70,10 +100,9 @@ function buildUrl(baseUrl, path, queryParams) {
 
 function buildHeaders(config) {
   const hdrs = {
-    "X-API-Key": config.apiKey,
+    "Authorization": "Bearer " + config.apiKey,
     "Accept": "application/json",
   };
-  if (config.organizationId) hdrs["X-Organization-ID"] = config.organizationId;
   return hdrs;
 }
 
@@ -210,13 +239,15 @@ async function openStream(method, path, opts = {}) {
       reject(new Error("Stream disconnected"));
     });
 
-    port.postMessage({
+    const msg = {
       type: "start",
       method: method || "POST",
       url,
       headers,
       body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
-    });
+    };
+    console.log("[aiApiClient] Requesting stream open:", msg);
+    port.postMessage(msg);
   });
 
   return {
@@ -237,7 +268,7 @@ export async function health() {
   try {
     _setStatus(ConnectionStatus.CONFIGURING);
     const data = await retryWithBackoff(() =>
-      sendBackgroundRequest("GET", "/api/v1/health", { timeout: 10000 })
+      sendBackgroundRequest("GET", "/api/v1/health/live", { timeout: 10000 })
     );
     _setStatus(ConnectionStatus.CONNECTED);
     return { status: "ok", data };

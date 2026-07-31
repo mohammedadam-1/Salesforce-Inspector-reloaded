@@ -85,8 +85,8 @@ const ChatState = {
 
   finalizeStreaming() {
     if (this._state.streamingMessage) {
-      this._state.streamingMessage.isStreaming = false;
-      this.addMessage(this._state.streamingMessage);
+      const finalMsg = {...this._state.streamingMessage, isStreaming: false};
+      this.addMessage(finalMsg);
     }
     this._setState({isStreaming: false, streamingMessage: null});
   },

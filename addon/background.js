@@ -15,7 +15,7 @@ async function resolveSessionCookie(sfHost, sender) {
     details.storeId = storeId;
   }
   return cookiesGet(details);
-}
+} 
 
 async function parseResponseBody(response) {
   const contentType = response.headers.get("content-type") || "";
@@ -95,12 +95,16 @@ async function performAiBackendRequest(request) {
   const timer = setTimeout(() => controller.abort(), timeout || 30000);
 
   try {
-    const response = await fetch(url, {
+    const fetchOpts = {
       method: method || "GET",
       headers: headers || {},
       body: body || undefined,
       signal: controller.signal,
-    });
+    };
+    console.log("[background] performAiBackendRequest before fetch:", url, fetchOpts);
+    const response = await fetch(url, fetchOpts);
+    console.log("[background] performAiBackendRequest after fetch status:", response.status, response.statusText);
+    
     clearTimeout(timer);
     const data = await parseResponseBody(response);
     if (!response.ok) {
@@ -109,6 +113,12 @@ async function performAiBackendRequest(request) {
     return { success: true, status: response.status, data };
   } catch (e) {
     clearTimeout(timer);
+    console.error("[background] performAiBackendRequest fetch error:", {
+      name: e.name,
+      message: e.message,
+      cause: e.cause,
+      url: url,
+    });
     if (e.name === "AbortError") {
       throw new Error("Request timed out");
     }
@@ -128,12 +138,17 @@ function handleStreamPort(port) {
         const streamId = port.name;
         _streamControllers.set(streamId, controller);
 
-        const response = await fetch(msg.url, {
+        const fetchOpts = {
           method: msg.method || "POST",
           headers: msg.headers || {},
           body: msg.body || undefined,
           signal: controller.signal,
-        });
+        };
+        console.log("[background] Fetching AI Stream URL:", msg.url);
+        console.log("[background] Fetch options:", fetchOpts);
+        
+        const response = await fetch(msg.url, fetchOpts);
+        console.log("[background] After fetch, response status:", response.status);
 
         if (!response.ok) {
           const data = await parseResponseBody(response);
@@ -154,6 +169,12 @@ function handleStreamPort(port) {
 
         port.postMessage({ type: "done" });
       } catch (e) {
+        console.error("[background] AI stream fetch error:", {
+          name: e.name,
+          message: e.message,
+          cause: e.cause,
+          url: msg.url,
+        });
         if (e.name === "AbortError") return;
         try { port.postMessage({ type: "error", error: e.message }); } catch (e2) { /* port may be closed */ }
       } finally {

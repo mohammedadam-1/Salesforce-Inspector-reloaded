@@ -17,7 +17,7 @@ from sfir_backend.api.deps import (
     get_graph_service,
     get_rbac_service,
 )
-from sfir_backend.api.v1.routes import api_router
+from sfir_backend.api.v1.routes import api_router, documentation as documentation_routes
 from sfir_backend.domain.documentation.models import (
     DocumentationFormat,
     DocumentationPage,
@@ -38,6 +38,10 @@ def org_id() -> uuid.UUID:
 @pytest.fixture
 def user_id() -> uuid.UUID:
     return uuid.uuid4()
+
+
+async def no_org_id() -> None:
+    return None
 
 
 @pytest.fixture
@@ -68,15 +72,36 @@ def app(
     mock_rbac: AsyncMock,
     mock_docs_engine: MagicMock,
     mock_graph_service: AsyncMock,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> FastAPI:
     application = FastAPI()
     application.include_router(api_router)
 
-    application.dependency_overrides[get_current_org_id] = lambda: org_id
-    application.dependency_overrides[get_current_user_id] = lambda: user_id
-    application.dependency_overrides[get_rbac_service] = lambda: mock_rbac
-    application.dependency_overrides[get_documentation_engine] = lambda: mock_docs_engine
-    application.dependency_overrides[get_graph_service] = lambda: mock_graph_service
+    async def inline_to_thread(func, /, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(documentation_routes.asyncio, "to_thread", inline_to_thread)
+
+    async def override_current_org_id() -> uuid.UUID:
+        return org_id
+
+    async def override_current_user_id() -> uuid.UUID:
+        return user_id
+
+    async def override_rbac_service() -> AsyncMock:
+        return mock_rbac
+
+    async def override_documentation_engine() -> MagicMock:
+        return mock_docs_engine
+
+    async def override_graph_service() -> AsyncMock:
+        return mock_graph_service
+
+    application.dependency_overrides[get_current_org_id] = override_current_org_id
+    application.dependency_overrides[get_current_user_id] = override_current_user_id
+    application.dependency_overrides[get_rbac_service] = override_rbac_service
+    application.dependency_overrides[get_documentation_engine] = override_documentation_engine
+    application.dependency_overrides[get_graph_service] = override_graph_service
 
     yield application
     application.dependency_overrides.clear()
@@ -126,7 +151,7 @@ class TestListDocumentation:
         client: AsyncClient,
         app: FastAPI,
     ) -> None:
-        app.dependency_overrides[get_current_org_id] = lambda: None
+        app.dependency_overrides[get_current_org_id] = no_org_id
         response = await client.get("/api/v1/documentation")
         assert response.status_code == 200
         data = response.json()
@@ -262,7 +287,7 @@ class TestGenerateDocumentation:
         client: AsyncClient,
         app: FastAPI,
     ) -> None:
-        app.dependency_overrides[get_current_org_id] = lambda: None
+        app.dependency_overrides[get_current_org_id] = no_org_id
         response = await client.post(
             "/api/v1/documentation/generate",
             json={"component_ids": ["object:Account"]},
@@ -379,7 +404,7 @@ class TestGetComponentDocumentation:
         client: AsyncClient,
         app: FastAPI,
     ) -> None:
-        app.dependency_overrides[get_current_org_id] = lambda: None
+        app.dependency_overrides[get_current_org_id] = no_org_id
 
         response = await client.get("/api/v1/documentation/object/Account")
         assert response.status_code == 400

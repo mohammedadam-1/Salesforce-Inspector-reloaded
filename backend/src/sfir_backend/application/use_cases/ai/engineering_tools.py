@@ -17,6 +17,19 @@ from sfir_backend.application.use_cases.ai.field_dependency_engine import (
 from sfir_backend.application.use_cases.ai.impact_assessor import ImpactAssessor
 from sfir_backend.application.use_cases.ai.metadata_analyzer import MetadataAnalyzer
 from sfir_backend.application.use_cases.ai.tools import AgentTool
+from sfir_backend.domain.request_context import RequestContext
+
+MISSING_REQUEST_CONTEXT_MESSAGE = (
+    "Request context with organization identity is required for this tool."
+)
+
+
+def _organization_id_from_context(
+    request_context: RequestContext | None,
+) -> Any | None:
+    if not request_context or not request_context.organization_id:
+        return None
+    return request_context.organization_id
 
 
 class FieldImpactTool(AgentTool):
@@ -47,9 +60,15 @@ class FieldImpactTool(AgentTool):
             "required": ["object_name"],
         }
 
-    async def execute(self, object_name: str, field_name: str = "") -> str:
-        import uuid
-        org_id = uuid.uuid4()
+    async def execute(
+        self,
+        object_name: str,
+        field_name: str = "",
+        request_context: RequestContext | None = None,
+    ) -> str:
+        org_id = _organization_id_from_context(request_context)
+        if org_id is None:
+            return MISSING_REQUEST_CONTEXT_MESSAGE
         if field_name:
             refs = await self._engine.find_field_references(org_id, object_name, field_name)
             if not refs:
@@ -108,7 +127,13 @@ class CodeReviewTool(AgentTool):
             "required": ["code_snippet", "language"],
         }
 
-    async def execute(self, code_snippet: str, language: str) -> str:
+    async def execute(
+        self,
+        code_snippet: str,
+        language: str,
+        request_context: RequestContext | None = None,
+    ) -> str:
+        _ = request_context
         lines: list[str] = [f"## Code Review — {language.upper()}\n"]
         total_lines = code_snippet.count("\n") + 1
         total_chars = len(code_snippet)
@@ -289,7 +314,9 @@ class SecurityReviewTool(AgentTool):
         component_type: str = "",
         component_name: str = "",
         code_snippet: str = "",
+        request_context: RequestContext | None = None,
     ) -> str:
+        _ = request_context
         findings: list[str] = []
 
         if code_snippet:
@@ -387,9 +414,11 @@ class DependencyAnalysisTool(AgentTool):
         field_name: str = "",
         component_type: str = "",
         component_name: str = "",
+        request_context: RequestContext | None = None,
     ) -> str:
-        import uuid
-        org_id = uuid.uuid4()
+        org_id = _organization_id_from_context(request_context)
+        if org_id is None:
+            return MISSING_REQUEST_CONTEXT_MESSAGE
 
         if analysis_type == "field_references" and object_name and field_name:
             refs = await self._analyzer.analyze_field_references(org_id, object_name, field_name)
@@ -535,10 +564,12 @@ class ImpactAssessmentTool(AgentTool):
         component_name: str = "",
         new_name: str = "",
         components_json: str = "",
+        request_context: RequestContext | None = None,
     ) -> str:
         import json
-        import uuid
-        org_id = uuid.uuid4()
+        org_id = _organization_id_from_context(request_context)
+        if org_id is None:
+            return MISSING_REQUEST_CONTEXT_MESSAGE
 
         if assessment_type == "delete_impact" and component_type and component_name:
             result = await self._assessor.assess_delete_impact(org_id, component_type, component_name)
@@ -673,9 +704,11 @@ class MetadataAnalysisTool(AgentTool):
         object_name: str = "",
         field_name: str = "",
         component_name: str = "",
+        request_context: RequestContext | None = None,
     ) -> str:
-        import uuid
-        org_id = uuid.uuid4()
+        org_id = _organization_id_from_context(request_context)
+        if org_id is None:
+            return MISSING_REQUEST_CONTEXT_MESSAGE
 
         if analysis_type == "analyze_object" and object_name:
             result = await self._analyzer.analyze_object(org_id, object_name)
@@ -829,7 +862,9 @@ class CodeIntelligenceTool(AgentTool):
         code: str = "",
         html_code: str = "",
         component_name: str = "",
+        request_context: RequestContext | None = None,
     ) -> str:
+        _ = request_context
         if analysis_type == "analyze_apex" and code:
             result = self._engine.analyze_apex(code)
             if "error" in result:
@@ -976,9 +1011,11 @@ class DocumentationGenerationTool(AgentTool):
         component_name: str = "",
         object_name: str = "",
         field_name: str = "",
+        request_context: RequestContext | None = None,
     ) -> str:
-        import uuid
-        org_id = uuid.uuid4()
+        org_id = _organization_id_from_context(request_context)
+        if org_id is None:
+            return MISSING_REQUEST_CONTEXT_MESSAGE
 
         if doc_type == "component" and component_type and component_name:
             result = await self._generator.generate_component_documentation(
@@ -1034,9 +1071,15 @@ class SafeDeleteTool(AgentTool):
             "required": ["component_type", "component_name"],
         }
 
-    async def execute(self, component_type: str, component_name: str) -> str:
-        import uuid
-        org_id = uuid.uuid4()
+    async def execute(
+        self,
+        component_type: str,
+        component_name: str,
+        request_context: RequestContext | None = None,
+    ) -> str:
+        org_id = _organization_id_from_context(request_context)
+        if org_id is None:
+            return MISSING_REQUEST_CONTEXT_MESSAGE
         result = await self._assessor.assess_delete_impact(org_id, component_type, component_name)
         if "error" in result:
             return result["error"]
@@ -1088,10 +1131,15 @@ class DeploymentRiskTool(AgentTool):
             "required": ["components_json"],
         }
 
-    async def execute(self, components_json: str) -> str:
+    async def execute(
+        self,
+        components_json: str,
+        request_context: RequestContext | None = None,
+    ) -> str:
         import json
-        import uuid
-        org_id = uuid.uuid4()
+        org_id = _organization_id_from_context(request_context)
+        if org_id is None:
+            return MISSING_REQUEST_CONTEXT_MESSAGE
 
         try:
             components = json.loads(components_json)

@@ -6,6 +6,8 @@ from datetime import UTC, datetime
 from enum import StrEnum, auto
 from typing import Any
 
+from sfir_backend.domain.request_context import RequestContext
+
 
 class AIFeature(StrEnum):
     EXPLAIN_APEX = auto()
@@ -108,6 +110,7 @@ class AIRequest:
     max_tokens: int = 4096
     stream: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
+    request_context: RequestContext | None = None
     request_id: uuid.UUID = field(default_factory=uuid.uuid4)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 

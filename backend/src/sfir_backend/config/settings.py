@@ -135,9 +135,8 @@ class Settings(BaseSettings):
                     "e.g. [\"https://app.sfir.dev\", \"chrome-extension://abc123...\"]",
     )
     cors_origins_regex: str | None = Field(
-        default=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
-        description="Regex pattern for allowed CORS origins. Matches all localhost/127.0.0.1 variants "
-                    "on any port. Set to None to disable.",
+        default=r"^(https?://(localhost|127\.0\.0\.1)(:\d+)?|chrome-extension://[a-z]{32})$",
+        description="Regex pattern for allowed CORS origins. Matches localhost/127.0.0.1 and Chrome extensions.",
     )
     cors_allow_credentials: bool = Field(default=True)
 

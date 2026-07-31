@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, PropertyMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import FastAPI
@@ -23,7 +23,6 @@ from sfir_backend.application.use_cases.ai.conversation_manager import (
 )
 from sfir_backend.application.use_cases.ai.orchestrator import AIOrchestrator
 from sfir_backend.domain.ai.models import (
-    AIFeature,
     AIResponse,
     Conversation,
     TokenUsage,
@@ -38,6 +37,10 @@ def org_id() -> uuid.UUID:
 @pytest.fixture
 def user_id() -> uuid.UUID:
     return uuid.uuid4()
+
+
+async def no_org_id() -> None:
+    return None
 
 
 @pytest.fixture
@@ -84,10 +87,22 @@ def app(
     application = FastAPI()
     application.include_router(api_router)
 
-    application.dependency_overrides[get_current_org_id] = lambda: org_id
-    application.dependency_overrides[get_current_user_id] = lambda: user_id
-    application.dependency_overrides[get_conversation_manager] = lambda: mock_conversation_manager
-    application.dependency_overrides[get_ai_orchestrator] = lambda: mock_orchestrator
+    async def override_current_org_id() -> uuid.UUID:
+        return org_id
+
+    async def override_current_user_id() -> uuid.UUID:
+        return user_id
+
+    async def override_conversation_manager() -> MagicMock:
+        return mock_conversation_manager
+
+    async def override_ai_orchestrator() -> AsyncMock:
+        return mock_orchestrator
+
+    application.dependency_overrides[get_current_org_id] = override_current_org_id
+    application.dependency_overrides[get_current_user_id] = override_current_user_id
+    application.dependency_overrides[get_conversation_manager] = override_conversation_manager
+    application.dependency_overrides[get_ai_orchestrator] = override_ai_orchestrator
 
     async def get_mock_container() -> MagicMock:
         container = MagicMock()
@@ -134,10 +149,10 @@ class TestListConversations:
         self,
         client: AsyncClient,
         app: FastAPI,
+        mock_conversation_manager: MagicMock,
     ) -> None:
-        app.dependency_overrides[get_current_org_id] = lambda: None
-        mock_cm: MagicMock = app.dependency_overrides[get_conversation_manager]()
-        mock_cm.list_conversations.return_value = []
+        app.dependency_overrides[get_current_org_id] = no_org_id
+        mock_conversation_manager.list_conversations.return_value = []
 
         response = await client.get("/api/v1/ai/conversations")
         assert response.status_code == 200
@@ -195,7 +210,7 @@ class TestCreateConversation:
         client: AsyncClient,
         app: FastAPI,
     ) -> None:
-        app.dependency_overrides[get_current_org_id] = lambda: None
+        app.dependency_overrides[get_current_org_id] = no_org_id
         response = await client.post(
             "/api/v1/ai/conversations",
             json={"title": "New Chat"},
@@ -406,8 +421,20 @@ class TestGetConversationMessages:
             "conversation_id": str(conv_id),
             "title": "Test",
             "messages": [
-                {"role": "user", "content": "Hello", "message_id": str(uuid.uuid4()), "conversation_id": str(conv_id), "created_at": datetime.now(UTC).isoformat()},
-                {"role": "assistant", "content": "Hi there", "message_id": str(uuid.uuid4()), "conversation_id": str(conv_id), "created_at": datetime.now(UTC).isoformat()},
+                {
+                    "role": "user",
+                    "content": "Hello",
+                    "message_id": str(uuid.uuid4()),
+                    "conversation_id": str(conv_id),
+                    "created_at": datetime.now(UTC).isoformat(),
+                },
+                {
+                    "role": "assistant",
+                    "content": "Hi there",
+                    "message_id": str(uuid.uuid4()),
+                    "conversation_id": str(conv_id),
+                    "created_at": datetime.now(UTC).isoformat(),
+                },
             ],
         }
 
@@ -467,7 +494,7 @@ class TestSendMessage:
         client: AsyncClient,
         app: FastAPI,
     ) -> None:
-        app.dependency_overrides[get_current_org_id] = lambda: None
+        app.dependency_overrides[get_current_org_id] = no_org_id
         conv_id = uuid.uuid4()
 
         response = await client.post(
@@ -543,7 +570,7 @@ class TestChatEndpoint:
         client: AsyncClient,
         app: FastAPI,
     ) -> None:
-        app.dependency_overrides[get_current_org_id] = lambda: None
+        app.dependency_overrides[get_current_org_id] = no_org_id
 
         response = await client.post(
             "/api/v1/ai/chat",

@@ -25,7 +25,6 @@ from sfir_backend.infrastructure.llm.context_retriever import (
     ContextCompressor,
     ContextRetriever,
 )
-from sfir_backend.infrastructure.llm.providers.base import LLMStreamChunk
 from sfir_backend.infrastructure.llm.providers.registry import ProviderRegistry
 from sfir_backend.infrastructure.llm.response_validator import (
     ResponseFormatter,
@@ -342,7 +341,11 @@ class AIRequestCoordinator:
                 if self._tool_registry:
                     tool_start = time.monotonic()
                     try:
-                        result = await self._tool_registry.execute(tool_name, **args)
+                        result = await self._tool_registry.execute(
+                            tool_name,
+                            request_context=request.request_context,
+                            **args,
+                        )
                         duration = (time.monotonic() - tool_start) * 1000
                         yield ("tool_complete", {
                             "tool": tool_name,

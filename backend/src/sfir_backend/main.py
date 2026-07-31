@@ -46,10 +46,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await container.startup()
     app.state.container = container
 
-    rate_limiter = container.get_service("rate_limiter") if hasattr(container, "get_service") else None
-    injection_filter = container.get_service("prompt_injection_filter") if hasattr(container, "get_service") else None
-    add_security_middleware(app, settings, rate_limiter=rate_limiter, injection_filter=injection_filter)
-
     logger.info(
         "application_started",
         environment=settings.environment,
@@ -96,6 +92,14 @@ def create_app(settings: Settings | None = None, validate: bool = True) -> FastA
     if settings.cors_origins_regex:
         cors_options["allow_origin_regex"] = settings.cors_origins_regex
     app.add_middleware(CORSMiddleware, **cors_options)
+    add_security_middleware(app, settings)
+
+    @app.middleware("http")
+    async def log_requests(request, call_next):
+        print(request.method, request.url)
+        response = await call_next(request)
+        print(response.status_code)
+        return response
 
     # Middleware (logging, metrics, tracing)
     add_middleware(app)

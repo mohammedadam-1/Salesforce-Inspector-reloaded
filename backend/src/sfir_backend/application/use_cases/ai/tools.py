@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
+from sfir_backend.domain.request_context import RequestContext
 from sfir_backend.infrastructure.llm.providers.base import ToolDefinition
 
 
@@ -23,7 +24,11 @@ class AgentTool(ABC):
         ...
 
     @abstractmethod
-    async def execute(self, **kwargs: Any) -> str:
+    async def execute(
+        self,
+        request_context: RequestContext | None = None,
+        **kwargs: Any,
+    ) -> str:
         ...
 
     def to_tool_definition(self) -> ToolDefinition:
@@ -50,8 +55,13 @@ class ToolRegistry:
     def to_definitions(self) -> list[ToolDefinition]:
         return [t.to_tool_definition() for t in self._tools.values()]
 
-    async def execute(self, name: str, **kwargs: Any) -> str:
+    async def execute(
+        self,
+        name: str,
+        request_context: RequestContext | None = None,
+        **kwargs: Any,
+    ) -> str:
         tool = self.get(name)
         if not tool:
             return f"Error: Tool '{name}' not found"
-        return await tool.execute(**kwargs)
+        return await tool.execute(request_context=request_context, **kwargs)

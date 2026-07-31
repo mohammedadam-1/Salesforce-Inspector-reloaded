@@ -9,6 +9,7 @@ const EXAMPLES = [
 ];
 
 export default function EmptyState({ onExampleClick, isUnconfigured }) {
+  const handleExample = typeof onExampleClick === "function" ? onExampleClick : () => {};
   if (isUnconfigured) {
     return h("div", { className: "ai-empty" },
       h("div", { className: "ai-empty-icon" },
@@ -40,7 +41,7 @@ export default function EmptyState({ onExampleClick, isUnconfigured }) {
       EXAMPLES.map((ex, i) =>
         h("button", {
           key: i,
-          onClick: () => onExampleClick(ex.text),
+          onClick: () => handleExample(ex.text),
         }, ex.prefix + ex.text)
       )
     )

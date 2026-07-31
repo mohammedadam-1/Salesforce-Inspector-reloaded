@@ -33,20 +33,31 @@ function fallbackCopy(text) {
   document.body.removeChild(ta);
 }
 
-function ReasoningSection({ text }) {
-  const [open, setOpen] = React.useState(false);
-  if (!text) return null;
-  return h("div", { className: "ai-reasoning-section" },
-    h("button", {
-      className: "ai-reasoning-toggle",
-      onClick: () => setOpen(!open),
-      "aria-expanded": open,
-    },
-      h("span", { className: "ai-reasoning-toggle-icon" }, open ? "\u25BC" : "\u25B6"),
-      h("span", null, "Reasoning"),
-    ),
-    open && h("div", { className: "ai-reasoning-content" }, text),
-  );
+class ReasoningSection extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { open: false };
+    this.toggle = this.toggle.bind(this);
+  }
+  toggle() {
+    this.setState((prev) => ({ open: !prev.open }));
+  }
+  render() {
+    const { text } = this.props;
+    const { open } = this.state;
+    if (!text) return null;
+    return h("div", { className: "ai-reasoning-section" },
+      h("button", {
+        className: "ai-reasoning-toggle",
+        onClick: this.toggle,
+        "aria-expanded": open,
+      },
+        h("span", { className: "ai-reasoning-toggle-icon" }, open ? "\u25BC" : "\u25B6"),
+        h("span", null, "Reasoning"),
+      ),
+      open && h("div", { className: "ai-reasoning-content" }, text),
+    );
+  }
 }
 
 function CitationChips({ citations }) {

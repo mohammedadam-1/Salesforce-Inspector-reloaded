@@ -17,6 +17,7 @@ from sfir_backend.domain.ai.models import (
     AIResponse,
     TokenUsage,
 )
+from sfir_backend.domain.request_context import RequestContext
 from sfir_backend.infrastructure.llm.ai_cache import AICache
 from sfir_backend.infrastructure.llm.providers.registry import ProviderRegistry
 from sfir_backend.infrastructure.llm.tracking import AIUsageTracker
@@ -86,7 +87,12 @@ class AIOrchestrator:
         max_tokens: int = 4096,
         stream: bool = False,
         feature: AIFeature = AIFeature.QUESTION_ANSWERING,
+        request_context: RequestContext | None = None,
     ) -> AIResponse:
+        request_context = request_context or RequestContext.authenticated(
+            user_id=user_id,
+            organization_id=organization_id,
+        )
         conv_id, history = self.conversation_manager.get_or_create_conversation(
             conversation_id=conversation_id,
             organization_id=organization_id,
@@ -111,6 +117,7 @@ class AIOrchestrator:
             max_tokens=max_tokens,
             stream=stream,
             context={"history": history},
+            request_context=request_context,
         )
 
         if self._circuit_breaker_registry:
@@ -153,7 +160,12 @@ class AIOrchestrator:
         max_tokens: int = 4096,
         feature: AIFeature = AIFeature.QUESTION_ANSWERING,
         messages: list[dict[str, str]] | None = None,
+        request_context: RequestContext | None = None,
     ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
+        request_context = request_context or RequestContext.authenticated(
+            user_id=user_id,
+            organization_id=organization_id,
+        )
         conv_id, history = self.conversation_manager.get_or_create_conversation(
             conversation_id=conversation_id,
             organization_id=organization_id,
@@ -190,6 +202,7 @@ class AIOrchestrator:
             max_tokens=max_tokens,
             stream=True,
             context={"history": history_for_context},
+            request_context=request_context,
         )
 
         accumulated_content = ""
@@ -247,6 +260,7 @@ class AIOrchestrator:
         user_id: uuid.UUID,
         _context: dict[str, Any] | None = None,
         provider: str | None = None,
+        request_context: RequestContext | None = None,
     ) -> AIResponse:
         return await self.chat(
             query=query,
@@ -254,6 +268,7 @@ class AIOrchestrator:
             user_id=user_id,
             provider=provider,
             feature=feature,
+            request_context=request_context,
         )
 
     async def summarize(
@@ -263,12 +278,14 @@ class AIOrchestrator:
         organization_id: uuid.UUID,
         user_id: uuid.UUID,
         _additional_context: str = "",
+        request_context: RequestContext | None = None,
     ) -> AIResponse:
         return await self.chat(
             query=data_summary,
             organization_id=organization_id,
             user_id=user_id,
             feature=feature,
+            request_context=request_context,
         )
 
     def get_providers(self) -> list[dict[str, Any]]:
