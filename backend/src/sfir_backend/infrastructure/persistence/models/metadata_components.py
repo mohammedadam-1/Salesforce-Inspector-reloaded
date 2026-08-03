@@ -73,8 +73,8 @@ class MetadataFieldModel(Base):
     organization_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True,
     )
-    object_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("metadata_objects.id"), nullable=False, index=True,
+    object_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("metadata_objects.id"), nullable=True, index=True,
     )
     object_api_name: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
     api_name: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
@@ -123,8 +123,8 @@ class MetadataValidationRuleModel(Base):
     organization_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True,
     )
-    object_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("metadata_objects.id"), nullable=False, index=True,
+    object_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("metadata_objects.id"), nullable=True, index=True,
     )
     object_api_name: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
     api_name: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
@@ -157,8 +157,8 @@ class MetadataRecordTypeModel(Base):
     organization_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True,
     )
-    object_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("metadata_objects.id"), nullable=False, index=True,
+    object_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("metadata_objects.id"), nullable=True, index=True,
     )
     object_api_name: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
     api_name: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
@@ -521,7 +521,7 @@ class MetadataDependencyModel(Base):
     target_type: Mapped[str] = mapped_column(String(64), nullable=False)
     dependency_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     source_field: Mapped[str | None] = mapped_column(String(256), nullable=True)
-    metadata: Mapped[dict] = mapped_column(JSONB, default=dict)
+    extra_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
     graph_version: Mapped[str] = mapped_column(String(64), default="1.0")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.now, nullable=False,
@@ -551,8 +551,472 @@ class SearchDocumentModel(Base):
     namespace: Mapped[str | None] = mapped_column(String(128), nullable=True)
     object_api_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
     tags: Mapped[list] = mapped_column(JSONB, default=list)
-    metadata: Mapped[dict] = mapped_column(JSONB, default=dict)
+    extra_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
     search_vector: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.now, nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.now, onupdate=datetime.now, nullable=False,
+    )
+
+
+class MetadataRoleModel(Base):
+    """Normalized Salesforce Role storage."""
+
+    __tablename__ = "metadata_roles"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True,
+    )
+    api_name: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
+    label: Mapped[str] = mapped_column(String(256), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    namespace: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    parent_role: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    case_access_level: Mapped[str] = mapped_column(String(32), default="None")
+    contact_access_level: Mapped[str] = mapped_column(String(32), default="None")
+    opportunity_access_level: Mapped[str] = mapped_column(String(32), default="None")
+    account_access_level: Mapped[str] = mapped_column(String(32), default="None")
+    may_forecast_manager: Mapped[bool] = mapped_column(Boolean, default=False)
+    fingerprint: Mapped[str] = mapped_column(String(64), default="")
+    metadata_properties: Mapped[dict] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.now, nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.now, onupdate=datetime.now, nullable=False,
+    )
+
+
+class MetadataQueueModel(Base):
+    """Normalized Salesforce Queue storage."""
+
+    __tablename__ = "metadata_queues"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True,
+    )
+    api_name: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
+    label: Mapped[str] = mapped_column(String(256), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    namespace: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    queue_sobjects: Mapped[list] = mapped_column(JSONB, default=list)
+    queue_members: Mapped[list] = mapped_column(JSONB, default=list)
+    queue_rules: Mapped[list] = mapped_column(JSONB, default=list)
+    fingerprint: Mapped[str] = mapped_column(String(64), default="")
+    metadata_properties: Mapped[dict] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.now, nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.now, onupdate=datetime.now, nullable=False,
+    )
+
+
+class MetadataPublicGroupModel(Base):
+    """Normalized Salesforce Public Group storage."""
+
+    __tablename__ = "metadata_public_groups"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True,
+    )
+    api_name: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
+    label: Mapped[str] = mapped_column(String(256), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    namespace: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    members: Mapped[list] = mapped_column(JSONB, default=list)
+    fingerprint: Mapped[str] = mapped_column(String(64), default="")
+    metadata_properties: Mapped[dict] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.now, nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.now, onupdate=datetime.now, nullable=False,
+    )
+
+
+class MetadataSharingRuleModel(Base):
+    """Normalized Salesforce Sharing Rule storage."""
+
+    __tablename__ = "metadata_sharing_rules"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True,
+    )
+    object_api_name: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
+    api_name: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
+    label: Mapped[str] = mapped_column(String(256), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    namespace: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    shared_to: Mapped[str] = mapped_column(String(256), default="")
+    shared_from: Mapped[str] = mapped_column(String(256), default="")
+    access_level: Mapped[str] = mapped_column(String(32), default="Read")
+    rule_type: Mapped[str] = mapped_column(String(64), default="CriteriaBased")
+    fingerprint: Mapped[str] = mapped_column(String(64), default="")
+    metadata_properties: Mapped[dict] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.now, nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.now, onupdate=datetime.now, nullable=False,
+    )
+
+
+class MetadataGlobalValueSetModel(Base):
+    """Normalized Salesforce Global Value Set storage."""
+
+    __tablename__ = "metadata_global_value_sets"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True,
+    )
+    api_name: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
+    label: Mapped[str] = mapped_column(String(256), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    namespace: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    master_label: Mapped[str] = mapped_column(String(256), default="")
+    custom_value: Mapped[list] = mapped_column(JSONB, default=list)
+    grouped: Mapped[bool] = mapped_column(Boolean, default=False)
+    sorting_order: Mapped[str] = mapped_column(String(32), default="Alphabetical")
+    value_settings: Mapped[list] = mapped_column(JSONB, default=list)
+    fingerprint: Mapped[str] = mapped_column(String(64), default="")
+    metadata_properties: Mapped[dict] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.now, nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.now, onupdate=datetime.now, nullable=False,
+    )
+
+
+class MetadataCustomMetadataModel(Base):
+    """Normalized Salesforce Custom Metadata Type storage."""
+
+    __tablename__ = "metadata_custom_metadata"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True,
+    )
+    api_name: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
+    label: Mapped[str] = mapped_column(String(256), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    namespace: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    visibility: Mapped[str] = mapped_column(String(32), default="Public")
+    fields: Mapped[list] = mapped_column(JSONB, default=list)
+    fingerprint: Mapped[str] = mapped_column(String(64), default="")
+    metadata_properties: Mapped[dict] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.now, nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.now, onupdate=datetime.now, nullable=False,
+    )
+
+
+class MetadataCustomSettingModel(Base):
+    """Normalized Salesforce Custom Setting storage."""
+
+    __tablename__ = "metadata_custom_settings"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True,
+    )
+    api_name: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
+    label: Mapped[str] = mapped_column(String(256), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    namespace: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    setting_type: Mapped[str] = mapped_column(String(32), default="list")
+    visibility: Mapped[str] = mapped_column(String(32), default="Public")
+    fields: Mapped[list] = mapped_column(JSONB, default=list)
+    fingerprint: Mapped[str] = mapped_column(String(64), default="")
+    metadata_properties: Mapped[dict] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.now, nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.now, onupdate=datetime.now, nullable=False,
+    )
+
+
+class MetadataFlowVersionModel(Base):
+    """Normalized Salesforce Flow Version storage."""
+
+    __tablename__ = "metadata_flow_versions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True,
+    )
+    api_name: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
+    label: Mapped[str] = mapped_column(String(256), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    namespace: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    flow_api_name: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
+    version_number: Mapped[int] = mapped_column(Integer, default=1)
+    definition: Mapped[dict] = mapped_column(JSONB, default=dict)
+    fingerprint: Mapped[str] = mapped_column(String(64), default="")
+    metadata_properties: Mapped[dict] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.now, nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.now, onupdate=datetime.now, nullable=False,
+    )
+
+
+class MetadataEmailTemplateModel(Base):
+    """Normalized Salesforce Email Template storage."""
+
+    __tablename__ = "metadata_email_templates"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True,
+    )
+    api_name: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
+    label: Mapped[str] = mapped_column(String(256), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    namespace: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    template_type: Mapped[str] = mapped_column(String(32), default="text")
+    object_type: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    available: Mapped[bool] = mapped_column(Boolean, default=True)
+    content: Mapped[str] = mapped_column(Text, default="")
+    subject: Mapped[str] = mapped_column(Text, default="")
+    encoding: Mapped[str] = mapped_column(String(32), default="UTF-8")
+    style: Mapped[str] = mapped_column(String(32), default="none")
+    ui_type: Mapped[str] = mapped_column(String(32), default="Aloha")
+    fingerprint: Mapped[str] = mapped_column(String(64), default="")
+    metadata_properties: Mapped[dict] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.now, nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.now, onupdate=datetime.now, nullable=False,
+    )
+
+
+class MetadataNamedCredentialModel(Base):
+    """Normalized Salesforce Named Credential storage."""
+
+    __tablename__ = "metadata_named_credentials"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True,
+    )
+    api_name: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
+    label: Mapped[str] = mapped_column(String(256), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    namespace: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    endpoint: Mapped[str] = mapped_column(String(512), default="")
+    principal_type: Mapped[str] = mapped_column(String(32), default="Anonymous")
+    protocol: Mapped[str] = mapped_column(String(32), default="NoAuthentication")
+    auth_provider: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    generate_authorization_header: Mapped[bool] = mapped_column(Boolean, default=True)
+    allow_merge_fields_in_header: Mapped[bool] = mapped_column(Boolean, default=True)
+    allow_merge_fields_in_body: Mapped[bool] = mapped_column(Boolean, default=True)
+    outbound_network_connection: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    fingerprint: Mapped[str] = mapped_column(String(64), default="")
+    metadata_properties: Mapped[dict] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.now, nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.now, onupdate=datetime.now, nullable=False,
+    )
+
+
+class MetadataConnectedAppModel(Base):
+    """Normalized Salesforce Connected App storage."""
+
+    __tablename__ = "metadata_connected_apps"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True,
+    )
+    api_name: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
+    label: Mapped[str] = mapped_column(String(256), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    namespace: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    version: Mapped[str] = mapped_column(String(32), default="1.0")
+    contact_email: Mapped[str] = mapped_column(String(256), default="")
+    contact_phone: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    icon_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    info_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    logo_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    mobile_app: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    mobile_start_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    oauth_config: Mapped[dict] = mapped_column(JSONB, default=dict)
+    permissions: Mapped[list] = mapped_column(JSONB, default=list)
+    permissions_enabled: Mapped[list] = mapped_column(JSONB, default=list)
+    plugin: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    plugin_execution_user: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    start_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    fingerprint: Mapped[str] = mapped_column(String(64), default="")
+    metadata_properties: Mapped[dict] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.now, nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.now, onupdate=datetime.now, nullable=False,
+    )
+
+
+class MetadataLightningPageModel(Base):
+    """Normalized Salesforce Lightning Page storage."""
+
+    __tablename__ = "metadata_lightning_pages"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True,
+    )
+    api_name: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
+    label: Mapped[str] = mapped_column(String(256), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    namespace: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    master_label: Mapped[str] = mapped_column(String(256), default="")
+    page_type: Mapped[str] = mapped_column(String(64), default="RecordPage")
+    template: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    regions: Mapped[list] = mapped_column(JSONB, default=list)
+    fingerprint: Mapped[str] = mapped_column(String(64), default="")
+    metadata_properties: Mapped[dict] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.now, nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.now, onupdate=datetime.now, nullable=False,
+    )
+
+
+class MetadataQuickActionModel(Base):
+    """Normalized Salesforce Quick Action storage."""
+
+    __tablename__ = "metadata_quick_actions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True,
+    )
+    object_api_name: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
+    api_name: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
+    label: Mapped[str] = mapped_column(String(256), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    namespace: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    action_type: Mapped[str] = mapped_column(String(64), default="Create")
+    target_object: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    target_record_type: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    target_field_list: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    height: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    width: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    icon: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    options_create: Mapped[bool] = mapped_column(Boolean, default=True)
+    options_edit: Mapped[bool] = mapped_column(Boolean, default=True)
+    options_event: Mapped[bool] = mapped_column(Boolean, default=False)
+    fingerprint: Mapped[str] = mapped_column(String(64), default="")
+    metadata_properties: Mapped[dict] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.now, nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.now, onupdate=datetime.now, nullable=False,
+    )
+
+
+class MetadataFormulaModel(Base):
+    """Normalized Salesforce Formula storage."""
+
+    __tablename__ = "metadata_formulas"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True,
+    )
+    object_api_name: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
+    api_name: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
+    label: Mapped[str] = mapped_column(String(256), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    namespace: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    field_api_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    formula_expression: Mapped[str] = mapped_column(Text, default="")
+    formula_type: Mapped[str] = mapped_column(String(32), default="formula")
+    formula_treat_blanks_as: Mapped[str] = mapped_column(String(32), default="BlankAsBlank")
+    return_type: Mapped[str] = mapped_column(String(32), default="Text")
+    fingerprint: Mapped[str] = mapped_column(String(64), default="")
+    metadata_properties: Mapped[dict] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.now, nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.now, onupdate=datetime.now, nullable=False,
+    )
+
+
+class MetadataApprovalProcessModel(Base):
+    """Normalized Salesforce Approval Process storage."""
+
+    __tablename__ = "metadata_approval_processes"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True,
+    )
+    object_api_name: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
+    api_name: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
+    label: Mapped[str] = mapped_column(String(256), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    namespace: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    record_editability: Mapped[str] = mapped_column(String(32), default="Editable")
+    allow_sequential: Mapped[bool] = mapped_column(Boolean, default=True)
+    show_approval_related_lists: Mapped[bool] = mapped_column(Boolean, default=True)
+    entry_criteria: Mapped[str] = mapped_column(Text, default="")
+    final_approval_field_lookup: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    final_rejection_field_lookup: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    steps: Mapped[list] = mapped_column(JSONB, default=list)
+    fingerprint: Mapped[str] = mapped_column(String(64), default="")
+    metadata_properties: Mapped[dict] = mapped_column(JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.now, nullable=False,
     )

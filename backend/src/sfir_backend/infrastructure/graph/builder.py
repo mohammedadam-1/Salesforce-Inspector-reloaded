@@ -16,6 +16,7 @@ from sfir_backend.domain.graph.models import (
 
 class GraphBuilder:
     NODE_TYPE_MAP: ClassVar[dict[str, NodeType]] = {
+        # snake_case canonical aliases
         "object": NodeType.OBJECT,
         "field": NodeType.FIELD,
         "relationship": NodeType.RELATIONSHIP,
@@ -45,7 +46,49 @@ class GraphBuilder:
         "public_group": NodeType.PUBLIC_GROUP,
         "sharing_rule": NodeType.SHARING_RULE,
         "global_value_set": NodeType.GLOBAL_VALUE_SET,
+        # PascalCase canonical names returned by the repository
+        "Object": NodeType.OBJECT,
+        "Field": NodeType.FIELD,
+        "Relationship": NodeType.RELATIONSHIP,
+        "Flow": NodeType.FLOW,
+        "FlowVersion": NodeType.FLOW_VERSION,
+        "ValidationRule": NodeType.VALIDATION_RULE,
+        "Formula": NodeType.FORMULA,
+        "Layout": NodeType.LAYOUT,
+        "RecordType": NodeType.RECORD_TYPE,
+        "PermissionSet": NodeType.PERMISSION_SET,
+        "Profile": NodeType.PROFILE,
+        "ApexClass": NodeType.APEX_CLASS,
+        "Trigger": NodeType.TRIGGER,
+        "Report": NodeType.REPORT,
+        "Dashboard": NodeType.DASHBOARD,
+        "Workflow": NodeType.WORKFLOW,
+        "ApprovalProcess": NodeType.APPROVAL_PROCESS,
+        "CustomMetadata": NodeType.CUSTOM_METADATA,
+        "CustomSetting": NodeType.CUSTOM_SETTING,
+        "LightningPage": NodeType.LIGHTNING_PAGE,
+        "QuickAction": NodeType.QUICK_ACTION,
+        "EmailTemplate": NodeType.EMAIL_TEMPLATE,
+        "NamedCredential": NodeType.NAMED_CREDENTIAL,
+        "ConnectedApp": NodeType.CONNECTED_APP,
+        "Role": NodeType.ROLE,
+        "Queue": NodeType.QUEUE,
+        "PublicGroup": NodeType.PUBLIC_GROUP,
+        "SharingRule": NodeType.SHARING_RULE,
+        "GlobalValueSet": NodeType.GLOBAL_VALUE_SET,
+        # Salesforce API type names
+        "CustomObject": NodeType.OBJECT,
+        "CustomField": NodeType.FIELD,
+        "ApexTrigger": NodeType.TRIGGER,
+        "WorkflowRule": NodeType.WORKFLOW,
     }
+
+    @classmethod
+    def resolve_node_type(cls, raw_type: str) -> NodeType:
+        """Resolve any type spelling (snake_case, PascalCase, SF API) to NodeType."""
+        if not raw_type:
+            return NodeType.OBJECT
+        return cls.NODE_TYPE_MAP.get(raw_type, NodeType.OBJECT)
 
     EDGE_TYPE_MAP: ClassVar[dict[str, EdgeType]] = {
         "contains": EdgeType.CONTAINS,
@@ -253,7 +296,7 @@ class GraphBuilder:
     # ── Legacy MetadataComponent-based methods ─────────────────
 
     def _component_to_node(self, comp: MetadataComponent) -> GraphNode:
-        node_type = self.NODE_TYPE_MAP.get(comp.type, NodeType.OBJECT)
+        node_type = self.resolve_node_type(comp.type)
         return GraphNode(
             id=comp.id or "",
             api_name=comp.api_name,
@@ -267,6 +310,8 @@ class GraphBuilder:
                 ),
                 "version": comp.version,
                 "status": comp.status.value if comp.status else "active",
+                "organization_id": comp.organization_id,
+                "hash": comp.hash or "",
             },
         )
 
@@ -280,8 +325,8 @@ class GraphBuilder:
         if not source_api_name or not target_api_name:
             return None
 
-        source_node_type = self.NODE_TYPE_MAP.get(source_type, NodeType.OBJECT)
-        target_node_type = self.NODE_TYPE_MAP.get(target_type, NodeType.OBJECT)
+        source_node_type = self.resolve_node_type(source_type)
+        target_node_type = self.resolve_node_type(target_type)
         source_id = f"{source_node_type.value}:{source_api_name}"
         target_id = f"{target_node_type.value}:{target_api_name}"
 

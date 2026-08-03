@@ -113,8 +113,13 @@ from sfir_backend.application.use_cases.ai.response_composer import ResponseComp
 from sfir_backend.application.use_cases.ai.prompt_builder import PromptBuilder
 from sfir_backend.application.use_cases.ai.tools import ToolRegistry
 from sfir_backend.application.use_cases.auth import AuthUseCase
-from sfir_backend.application.use_cases.graph.service import GraphService
+from sfir_backend.application.use_cases.graph.repository_service import (
+    RepositoryGraphService,
+)
 from sfir_backend.application.use_cases.metadata_sync import SyncCoordinator
+from sfir_backend.application.use_cases.metadata.validation_engine import (
+    MetadataValidationEngine,
+)
 from sfir_backend.application.use_cases.organization import OrganizationUseCase
 from sfir_backend.application.use_cases.rbac import RBACUseCase
 from sfir_backend.application.use_cases.salesforce import SalesforceUseCase
@@ -165,6 +170,9 @@ from sfir_backend.infrastructure.persistence.repositories.salesforce_connection_
 from sfir_backend.infrastructure.persistence.repositories.session_repo import (
     SessionRepository,
 )
+from sfir_backend.infrastructure.persistence.repositories.metadata_repo import (
+    SQLAlchemyMetadataRepository,
+)
 from sfir_backend.infrastructure.persistence.repositories.sync_repos import (
     MetadataVersionRepository,
     SyncHistoryRepository,
@@ -182,12 +190,16 @@ from sfir_backend.infrastructure.salesforce.graph.profile import ProfileDependen
 from sfir_backend.infrastructure.salesforce.graph.validation import (
     ValidationRuleDependencyExtractor,
 )
+from sfir_backend.infrastructure.graph.cache import GraphCacheCoordinator
 from sfir_backend.infrastructure.graph.engine import DependencyGraphEngine
 from sfir_backend.infrastructure.search.engine import SearchEngine
 from sfir_backend.infrastructure.salesforce.oauth import SalesforceOAuthService
 from sfir_backend.infrastructure.salesforce.parsers.apex import (
     ApexClassParser,
     ApexTriggerParser,
+)
+from sfir_backend.infrastructure.salesforce.parsers.canonical_adapter import (
+    build_canonical_parser_adapters,
 )
 from sfir_backend.infrastructure.salesforce.parsers.layout import LayoutParser
 from sfir_backend.infrastructure.salesforce.parsers.object import CustomObjectParser
@@ -243,6 +255,7 @@ def _make_repos_from_session(session: AsyncSession) -> dict[str, Any]:
         "sync_history": SyncHistoryRepository(session),
         "sync_retry_queue": SyncRetryQueueRepository(session),
         "sync_statistics": SyncStatisticsRepository(session),
+        "metadata": SQLAlchemyMetadataRepository(session),
     }
 
 
@@ -517,6 +530,7 @@ class Container:
         self._use_case_factories["agent_service"] = lambda: self._make_agent_service()
         self._use_case_factories["ai_orchestrator"] = lambda: self._make_ai_orchestrator()
         self._use_case_factories["metadata_pipeline"] = lambda: self._make_metadata_pipeline()
+        self._use_case_factories["metadata_validation"] = lambda: self._make_metadata_validation_engine()
 
     def _get_session(self) -> AsyncSession:
         if not self._session_factory:
@@ -541,6 +555,7 @@ class Container:
             "sync_history": SyncHistoryRepository(session),
             "sync_retry_queue": SyncRetryQueueRepository(session),
             "sync_statistics": SyncStatisticsRepository(session),
+            "metadata": SQLAlchemyMetadataRepository(session),
         }
 
     def _make_auth_use_case(self) -> AuthUseCase:
@@ -696,7 +711,7 @@ class Container:
         parser_registry = self._services["parser_registry"]
         graph_engine: DependencyGraphEngine = self._services["graph_engine"]
         search_engine: SearchEngine = self._services["search_engine"]
-        version_repo = repos["metadata_version"]
+        metadata_repo = repos["metadata"]
 
         mapper = self._make_canonical_mapper()
         validator = self._make_canonical_validator()
@@ -706,7 +721,7 @@ class Container:
             CanonicalMappingStage(mapper=mapper),
             ValidationStage(validator=validator),
             NormalizationStage(normalizer=normalizer),
-            PersistenceStage(version_repo=version_repo),
+            PersistenceStage(metadata_repo=metadata_repo),
             GraphStage(graph_engine=graph_engine),
             SearchStage(search_engine=search_engine),
         ]
@@ -717,7 +732,7 @@ class Container:
         parser_registry = self._services["parser_registry"]
         graph_engine: DependencyGraphEngine = self._services["graph_engine"]
         search_engine: SearchEngine = self._services["search_engine"]
-        version_repo = repos["metadata_version"]
+        metadata_repo = repos["metadata"]
 
         mapper = self._make_canonical_mapper()
         validator = self._make_canonical_validator()
@@ -727,11 +742,31 @@ class Container:
             CanonicalMappingStage(mapper=mapper),
             ValidationStage(validator=validator),
             NormalizationStage(normalizer=normalizer),
-            PersistenceStage(version_repo=version_repo),
+            PersistenceStage(metadata_repo=metadata_repo),
             GraphStage(graph_engine=graph_engine),
             SearchStage(search_engine=search_engine),
         ]
         return MetadataPipeline(stages=stages)
+
+    def _make_metadata_validation_engine(self) -> MetadataValidationEngine:
+        repos = self._make_repos()
+        validator = self._make_canonical_validator()
+        return MetadataValidationEngine(
+            metadata_repo=repos["metadata"],
+            validator=validator,
+            sync_job_repo=repos["sync_job"],
+        )
+
+    def create_metadata_validation_engine(
+        self, session: AsyncSession,
+    ) -> MetadataValidationEngine:
+        repos = _make_repos_from_session(session)
+        validator = self._make_canonical_validator()
+        return MetadataValidationEngine(
+            metadata_repo=repos["metadata"],
+            validator=validator,
+            sync_job_repo=repos["sync_job"],
+        )
 
     def _make_canonical_mapper(self) -> CanonicalMapper:
         mapper = CanonicalMapper()
@@ -783,11 +818,18 @@ class Container:
 
     def _make_parser_registry(self) -> ParserRegistry:
         registry = ParserRegistry()
+        # Narrow runtime parsers first: they win for the 5 types they cover
+        # (registry.get returns the first can_parse() match), preserving the
+        # existing behavior exactly.
         registry.register(ApexClassParser())
         registry.register(ApexTriggerParser())
         registry.register(CustomObjectParser())
         registry.register(LayoutParser())
         registry.register(ValidationRuleParser())
+        # Canonical adapters: richer broad parsers reused behind the same
+        # MetadataParser contract for every other supported metadata type.
+        for adapter in build_canonical_parser_adapters():
+            registry.register(adapter)
         return registry
 
     def _make_extractor(self) -> CompositeExtractor:
@@ -798,20 +840,22 @@ class Container:
         extractor.register(ValidationRuleDependencyExtractor())
         return extractor
 
-    def _make_graph_service(self) -> GraphService:
+    def _make_graph_service(self) -> RepositoryGraphService:
         repos = self._make_repos()
-        return GraphService(
-            version_repo=repos["metadata_version"],
-            parser_registry=self._services["parser_registry"],
-            extractor=self._make_extractor(),
+        return RepositoryGraphService(
+            metadata_repo=repos["metadata"],
+            graph_engine=self._services["graph_engine"],
+            cache=self._services["graph_cache"],
+            cache_coordinator=GraphCacheCoordinator(),
         )
 
-    def create_graph_service(self, session: AsyncSession) -> GraphService:
+    def create_graph_service(self, session: AsyncSession) -> RepositoryGraphService:
         repos = _make_repos_from_session(session)
-        return GraphService(
-            version_repo=repos["metadata_version"],
-            parser_registry=self._services["parser_registry"],
-            extractor=self._make_extractor(),
+        return RepositoryGraphService(
+            metadata_repo=repos["metadata"],
+            graph_engine=self._services["graph_engine"],
+            cache=self._services["graph_cache"],
+            cache_coordinator=GraphCacheCoordinator(),
         )
 
     def _make_llm_provider(self) -> Any:

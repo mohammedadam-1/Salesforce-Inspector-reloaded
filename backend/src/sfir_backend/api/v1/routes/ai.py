@@ -32,7 +32,9 @@ from sfir_backend.application.use_cases.ai.conversation_manager import (
     ConversationManager,
 )
 from sfir_backend.application.use_cases.ai.orchestrator import AIOrchestrator
-from sfir_backend.application.use_cases.graph.service import GraphService
+from sfir_backend.application.use_cases.graph.repository_service import (
+    RepositoryGraphService,
+)
 from sfir_backend.config.container import Container
 from sfir_backend.domain.ai.models import AIFeature
 from sfir_backend.domain.request_context import RequestContext
@@ -253,12 +255,18 @@ async def agent_query(
     history: list[dict[str, str]] | None = None,
     org_id: uuid.UUID | None = Depends(get_current_org_id),
     agent: AgentService = Depends(lambda c: c.get_use_case("agent_service")),
-    graph_service: GraphService = Depends(lambda c: c.get_use_case("graph_service")),
+    graph_service: RepositoryGraphService = Depends(
+        lambda c: c.get_use_case("graph_service")
+    ),
+    request_context: RequestContext = Depends(get_optional_request_context),
     container: Container = Depends(get_container),
 ) -> dict[str, Any]:
     if not org_id:
         return {"error": "Organization context required"}
-    graph = await graph_service.build_graph(org_id)
+    graph = await graph_service.build_graph(
+        org_id,
+        request_context=request_context if request_context.is_authenticated else None,
+    )
     result = await agent.process_query(query, org_id, graph, history)
     return result
 

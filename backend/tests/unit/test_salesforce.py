@@ -263,40 +263,70 @@ class TestSalesforceOAuthService:
 # ---------------------------------------------------------------------------
 
 class TestCircuitBreaker:
-    def test_closed_by_default(self) -> None:
+    @pytest.mark.asyncio
+    async def test_closed_by_default(self) -> None:
         cb = CircuitBreaker()
         assert not cb._open
 
-    def test_success_resets_failures(self) -> None:
+    @pytest.mark.asyncio
+    async def test_success_resets_failures(self) -> None:
         cb = CircuitBreaker(failure_threshold=2)
+
+        async def fail() -> None:
+            raise ValueError("fail")
+
+        async def ok() -> str:
+            return "ok"
+
         with pytest.raises(ValueError):
-            cb.call(lambda: (_ for _ in ()).throw(ValueError("fail")))
+            await cb.call(fail())
         assert cb._failures == 1
-        cb.call(lambda: "ok")
+        await cb.call(ok())
         assert cb._failures == 0
 
-    def test_opens_after_threshold(self) -> None:
+    @pytest.mark.asyncio
+    async def test_opens_after_threshold(self) -> None:
         cb = CircuitBreaker(failure_threshold=3)
+
+        async def fail() -> None:
+            raise ValueError("fail")
+
         for _ in range(3):
             with pytest.raises(ValueError):
-                cb.call(lambda: (_ for _ in ()).throw(ValueError("fail")))
+                await cb.call(fail())
         assert cb._open
 
-    def test_rejects_when_open(self) -> None:
+    @pytest.mark.asyncio
+    async def test_rejects_when_open(self) -> None:
         cb = CircuitBreaker(failure_threshold=1, recovery_timeout=60.0)
-        with pytest.raises(ValueError):
-            cb.call(lambda: (_ for _ in ()).throw(ValueError("fail")))
-        with pytest.raises(CircuitBreakerOpenError):
-            cb.call(lambda: "should not execute")
 
-    def test_recovers_after_timeout(self) -> None:
+        async def fail() -> None:
+            raise ValueError("fail")
+
+        async def ok() -> str:
+            return "ok"
+
+        with pytest.raises(ValueError):
+            await cb.call(fail())
+        with pytest.raises(CircuitBreakerOpenError):
+            await cb.call(ok())
+
+    @pytest.mark.asyncio
+    async def test_recovers_after_timeout(self) -> None:
         import time
         cb = CircuitBreaker(failure_threshold=1, recovery_timeout=0.01)
+
+        async def fail() -> None:
+            raise ValueError("fail")
+
+        async def ok() -> str:
+            return "ok"
+
         with pytest.raises(ValueError):
-            cb.call(lambda: (_ for _ in ()).throw(ValueError("fail")))
+            await cb.call(fail())
         assert cb._open
         time.sleep(0.02)
-        cb.call(lambda: "recovered")
+        await cb.call(ok())
         assert not cb._open
 
 

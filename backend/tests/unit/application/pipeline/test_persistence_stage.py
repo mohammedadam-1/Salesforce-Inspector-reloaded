@@ -10,7 +10,7 @@ import pytest
 from sfir_backend.application.pipeline.pipeline_context import PipelineContext
 from sfir_backend.application.pipeline.stages import PersistenceStage
 from sfir_backend.domain.entities.metadata_sync import MetadataVersion
-from sfir_backend.domain.repositories.sync_repos import IMetadataVersionRepository
+from sfir_backend.domain.repositories.metadata_repo import IMetadataRepository
 from sfir_backend.domain.value_objects.metadata import MetadataAction
 
 
@@ -73,6 +73,8 @@ def _normalized_dict(
         "fully_qualified_name": api_name,
         "version": 1,
         "status": "active",
+        "source_platform": "salesforce",
+        "properties": {},
     }
 
 
@@ -81,21 +83,23 @@ def _canonical_component(api_name: str = "MyClass", type_name: str = "ApexClass"
     comp.api_name = api_name
     comp.type = type_name
     comp.id = uuid.uuid4()
+    comp.hash = "canonical_hash"
     comp.model_dump.return_value = {"api_name": api_name, "type": type_name}
     return comp
 
 
 @pytest.fixture
 def mock_repo() -> AsyncMock:
-    repo = AsyncMock(spec=IMetadataVersionRepository)
-    repo.list_by_organization.return_value = []
-    repo.save_many.return_value = []
+    repo = AsyncMock(spec=IMetadataRepository)
+    repo.list_versions_by_organization.return_value = []
+    repo.save_versions.return_value = []
+    repo.save_batch.return_value = []
     return repo
 
 
 @pytest.fixture
 def stage(mock_repo: AsyncMock) -> PersistenceStage:
-    return PersistenceStage(version_repo=mock_repo)
+    return PersistenceStage(metadata_repo=mock_repo)
 
 
 # ---------------------------------------------------------------------------
@@ -109,11 +113,11 @@ class TestNormalizedDocumentPersistence:
         doc = _normalized_dict(api_name="TestClass", type_name="ApexClass")
         ctx = _make_context(normalized_components=[doc])
 
-        def save_many_side_effect(versions: list[MetadataVersion]) -> list[MetadataVersion]:
+        def save_versions_side_effect(org_id, versions: list[MetadataVersion]) -> list[MetadataVersion]:
             for v in versions:
                 v.id = uuid.uuid4()
             return versions
-        mock_repo.save_many.side_effect = save_many_side_effect
+        mock_repo.save_versions.side_effect = save_versions_side_effect
 
         result = await stage.execute(ctx)
 
@@ -122,7 +126,7 @@ class TestNormalizedDocumentPersistence:
         assert result.persistence_result["skipped"] == 0
         assert result.persistence_result["errors"] == 0
         assert len(result.errors) == 0
-        mock_repo.save_many.assert_awaited_once()
+        mock_repo.save_versions.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_persists_multiple_normalized_dicts(self, stage: PersistenceStage, mock_repo: AsyncMock) -> None:
@@ -133,18 +137,18 @@ class TestNormalizedDocumentPersistence:
         ]
         ctx = _make_context(normalized_components=docs)
 
-        def save_many_side_effect(versions: list[MetadataVersion]) -> list[MetadataVersion]:
+        def save_versions_side_effect(org_id, versions: list[MetadataVersion]) -> list[MetadataVersion]:
             for v in versions:
                 v.id = uuid.uuid4()
             return versions
-        mock_repo.save_many.side_effect = save_many_side_effect
+        mock_repo.save_versions.side_effect = save_versions_side_effect
 
         result = await stage.execute(ctx)
 
         assert len(result.saved_versions) == 3
         assert result.persistence_result["saved"] == 3
-        mock_repo.save_many.assert_awaited_once()
-        saved_args = mock_repo.save_many.await_args[0][0]
+        mock_repo.save_versions.assert_awaited_once()
+        saved_args = mock_repo.save_versions.await_args[0][1]
         assert len(saved_args) == 3
 
     @pytest.mark.asyncio
@@ -153,11 +157,11 @@ class TestNormalizedDocumentPersistence:
         canon = _canonical_component(api_name="FromCanonical", type_name="ApexClass")
         ctx = _make_context(normalized_components=[doc], canonical_components=[canon])
 
-        def save_many_side_effect(versions: list[MetadataVersion]) -> list[MetadataVersion]:
+        def save_versions_side_effect(org_id, versions: list[MetadataVersion]) -> list[MetadataVersion]:
             for v in versions:
                 v.id = uuid.uuid4()
             return versions
-        mock_repo.save_many.side_effect = save_many_side_effect
+        mock_repo.save_versions.side_effect = save_versions_side_effect
 
         result = await stage.execute(ctx)
 
@@ -169,11 +173,11 @@ class TestNormalizedDocumentPersistence:
         canon = _canonical_component(api_name="CanonicalOnly", type_name="ApexClass")
         ctx = _make_context(normalized_components=[], canonical_components=[canon])
 
-        def save_many_side_effect(versions: list[MetadataVersion]) -> list[MetadataVersion]:
+        def save_versions_side_effect(org_id, versions: list[MetadataVersion]) -> list[MetadataVersion]:
             for v in versions:
                 v.id = uuid.uuid4()
             return versions
-        mock_repo.save_many.side_effect = save_many_side_effect
+        mock_repo.save_versions.side_effect = save_versions_side_effect
 
         result = await stage.execute(ctx)
 
@@ -191,7 +195,7 @@ class TestFingerprintChangeDetection:
     @pytest.mark.asyncio
     async def test_skips_when_fingerprint_matches(self, stage: PersistenceStage, mock_repo: AsyncMock) -> None:
         fp = "matching_fingerprint"
-        mock_repo.list_by_organization.return_value = [
+        mock_repo.list_versions_by_organization.return_value = [
             _version(
                 component_type="ApexClass",
                 component_name="MyClass",
@@ -208,11 +212,11 @@ class TestFingerprintChangeDetection:
         assert len(result.saved_versions) == 0
         assert result.persistence_result["saved"] == 0
         assert result.persistence_result["skipped"] == 1
-        mock_repo.save_many.assert_not_called()
+        mock_repo.save_versions.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_persists_when_fingerprint_differs(self, stage: PersistenceStage, mock_repo: AsyncMock) -> None:
-        mock_repo.list_by_organization.return_value = [
+        mock_repo.list_versions_by_organization.return_value = [
             _version(
                 component_type="ApexClass",
                 component_name="MyClass",
@@ -224,11 +228,11 @@ class TestFingerprintChangeDetection:
         doc = _normalized_dict(api_name="MyClass", type_name="ApexClass", fingerprint="new_fingerprint")
         ctx = _make_context(normalized_components=[doc])
 
-        def save_many_side_effect(versions: list[MetadataVersion]) -> list[MetadataVersion]:
+        def save_versions_side_effect(org_id, versions: list[MetadataVersion]) -> list[MetadataVersion]:
             for v in versions:
                 v.id = uuid.uuid4()
             return versions
-        mock_repo.save_many.side_effect = save_many_side_effect
+        mock_repo.save_versions.side_effect = save_versions_side_effect
 
         result = await stage.execute(ctx)
 
@@ -239,7 +243,7 @@ class TestFingerprintChangeDetection:
 
     @pytest.mark.asyncio
     async def test_skips_partial_batch_by_fingerprint(self, stage: PersistenceStage, mock_repo: AsyncMock) -> None:
-        mock_repo.list_by_organization.return_value = [
+        mock_repo.list_versions_by_organization.return_value = [
             _version(
                 component_type="ApexClass",
                 component_name="Changed",
@@ -261,11 +265,11 @@ class TestFingerprintChangeDetection:
         ]
         ctx = _make_context(normalized_components=docs)
 
-        def save_many_side_effect(versions: list[MetadataVersion]) -> list[MetadataVersion]:
+        def save_versions_side_effect(org_id, versions: list[MetadataVersion]) -> list[MetadataVersion]:
             for v in versions:
                 v.id = uuid.uuid4()
             return versions
-        mock_repo.save_many.side_effect = save_many_side_effect
+        mock_repo.save_versions.side_effect = save_versions_side_effect
 
         result = await stage.execute(ctx)
 
@@ -278,7 +282,7 @@ class TestFingerprintChangeDetection:
 
     @pytest.mark.asyncio
     async def test_empty_fingerprint_in_db_does_not_skip(self, stage: PersistenceStage, mock_repo: AsyncMock) -> None:
-        mock_repo.list_by_organization.return_value = [
+        mock_repo.list_versions_by_organization.return_value = [
             _version(
                 component_type="ApexClass",
                 component_name="MyClass",
@@ -290,11 +294,11 @@ class TestFingerprintChangeDetection:
         doc = _normalized_dict(api_name="MyClass", type_name="ApexClass", fingerprint="some_fp")
         ctx = _make_context(normalized_components=[doc])
 
-        def save_many_side_effect(versions: list[MetadataVersion]) -> list[MetadataVersion]:
+        def save_versions_side_effect(org_id, versions: list[MetadataVersion]) -> list[MetadataVersion]:
             for v in versions:
                 v.id = uuid.uuid4()
             return versions
-        mock_repo.save_many.side_effect = save_many_side_effect
+        mock_repo.save_versions.side_effect = save_versions_side_effect
 
         result = await stage.execute(ctx)
 
@@ -315,12 +319,12 @@ class TestVersionCreation:
 
         captured: list[MetadataVersion] = []
 
-        async def capture(versions: list[MetadataVersion]) -> list[MetadataVersion]:
+        async def capture(org_id, versions: list[MetadataVersion]) -> list[MetadataVersion]:
             for v in versions:
                 v.id = uuid.uuid4()
                 captured.append(v)
             return versions
-        mock_repo.save_many.side_effect = capture
+        mock_repo.save_versions.side_effect = capture
 
         await stage.execute(ctx)
 
@@ -338,7 +342,7 @@ class TestVersionCreation:
 
     @pytest.mark.asyncio
     async def test_version_increments_for_existing_component(self, stage: PersistenceStage, mock_repo: AsyncMock) -> None:
-        mock_repo.list_by_organization.return_value = [
+        mock_repo.list_versions_by_organization.return_value = [
             _version(
                 component_type="ApexClass",
                 component_name="TestClass",
@@ -351,12 +355,12 @@ class TestVersionCreation:
         ctx = _make_context(normalized_components=[doc])
 
         captured: list[MetadataVersion] = []
-        async def capture(versions: list[MetadataVersion]) -> list[MetadataVersion]:
+        async def capture(org_id, versions: list[MetadataVersion]) -> list[MetadataVersion]:
             for v in versions:
                 v.id = uuid.uuid4()
                 captured.append(v)
             return versions
-        mock_repo.save_many.side_effect = capture
+        mock_repo.save_versions.side_effect = capture
 
         await stage.execute(ctx)
 
@@ -366,7 +370,7 @@ class TestVersionCreation:
 
     @pytest.mark.asyncio
     async def test_version_increment_per_type_name_pair(self, stage: PersistenceStage, mock_repo: AsyncMock) -> None:
-        mock_repo.list_by_organization.return_value = [
+        mock_repo.list_versions_by_organization.return_value = [
             _version(component_type="ApexClass", component_name="ClassA", version_number=5, fingerprint="fp_a"),
             _version(component_type="CustomObject", component_name="ObjB", version_number=2, fingerprint="fp_b"),
         ]
@@ -378,12 +382,12 @@ class TestVersionCreation:
         ctx = _make_context(normalized_components=docs)
 
         captured: list[MetadataVersion] = []
-        async def capture(versions: list[MetadataVersion]) -> list[MetadataVersion]:
+        async def capture(org_id, versions: list[MetadataVersion]) -> list[MetadataVersion]:
             for v in versions:
                 v.id = uuid.uuid4()
                 captured.append(v)
             return versions
-        mock_repo.save_many.side_effect = capture
+        mock_repo.save_versions.side_effect = capture
 
         await stage.execute(ctx)
 
@@ -403,34 +407,34 @@ class TestBatchPersistence:
         docs = [_normalized_dict(api_name=f"Class{i}", type_name="ApexClass") for i in range(10)]
         ctx = _make_context(normalized_components=docs)
 
-        def save_many_side_effect(versions: list[MetadataVersion]) -> list[MetadataVersion]:
+        def save_versions_side_effect(org_id, versions: list[MetadataVersion]) -> list[MetadataVersion]:
             for v in versions:
                 v.id = uuid.uuid4()
             return versions
-        mock_repo.save_many.side_effect = save_many_side_effect
+        mock_repo.save_versions.side_effect = save_versions_side_effect
 
         await stage.execute(ctx)
 
-        mock_repo.save_many.assert_awaited_once()
-        args = mock_repo.save_many.await_args[0][0]
+        mock_repo.save_versions.assert_awaited_once()
+        args = mock_repo.save_versions.await_args[0][1]
         assert len(args) == 10
 
     @pytest.mark.asyncio
     async def test_batch_save_not_called_when_nothing_to_save(self, stage: PersistenceStage, mock_repo: AsyncMock) -> None:
         ctx = _make_context(normalized_components=[])
         await stage.execute(ctx)
-        mock_repo.save_many.assert_not_called()
+        mock_repo.save_versions.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_batch_save_not_called_when_all_skipped(self, stage: PersistenceStage, mock_repo: AsyncMock) -> None:
         fp = "same"
-        mock_repo.list_by_organization.return_value = [
+        mock_repo.list_versions_by_organization.return_value = [
             _version(component_type="ApexClass", component_name="MyClass", version_number=1, fingerprint=fp),
         ]
         doc = _normalized_dict(api_name="MyClass", type_name="ApexClass", fingerprint=fp)
         ctx = _make_context(normalized_components=[doc])
         await stage.execute(ctx)
-        mock_repo.save_many.assert_not_called()
+        mock_repo.save_versions.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -441,7 +445,7 @@ class TestBatchPersistence:
 class TestErrorHandling:
     @pytest.mark.asyncio
     async def test_list_failure_sets_error(self, stage: PersistenceStage, mock_repo: AsyncMock) -> None:
-        mock_repo.list_by_organization.side_effect = RuntimeError("DB unavailable")
+        mock_repo.list_versions_by_organization.side_effect = RuntimeError("DB unavailable")
 
         doc = _normalized_dict(api_name="Test", type_name="ApexClass")
         ctx = _make_context(normalized_components=[doc])
@@ -453,7 +457,7 @@ class TestErrorHandling:
     async def test_save_failure_records_error(self, stage: PersistenceStage, mock_repo: AsyncMock) -> None:
         doc = _normalized_dict(api_name="Test", type_name="ApexClass")
         ctx = _make_context(normalized_components=[doc])
-        mock_repo.save_many.side_effect = RuntimeError("Save failed")
+        mock_repo.save_versions.side_effect = RuntimeError("Save failed")
 
         result = await stage.execute(ctx)
 
@@ -468,11 +472,11 @@ class TestErrorHandling:
         doc_good = _normalized_dict(api_name="Good", type_name="ApexClass", fingerprint="fp_good")
         ctx = _make_context(normalized_components=[doc_bad, doc_good])
 
-        def save_many_side_effect(versions: list[MetadataVersion]) -> list[MetadataVersion]:
+        def save_versions_side_effect(org_id, versions: list[MetadataVersion]) -> list[MetadataVersion]:
             for v in versions:
                 v.id = uuid.uuid4()
             return versions
-        mock_repo.save_many.side_effect = save_many_side_effect
+        mock_repo.save_versions.side_effect = save_versions_side_effect
 
         result = await stage.execute(ctx)
 
@@ -490,7 +494,7 @@ class TestErrorHandling:
         assert result.persistence_result["skipped"] == 0
         assert result.persistence_result["errors"] == 0
         assert len(result.saved_versions) == 0
-        mock_repo.save_many.assert_not_called()
+        mock_repo.save_versions.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_component_exception_during_processing(self, stage: PersistenceStage, mock_repo: AsyncMock) -> None:
@@ -506,11 +510,11 @@ class TestErrorHandling:
 
         ctx = _make_context(normalized_components=[ExplodingDict()])
 
-        def save_many_side_effect(versions: list[MetadataVersion]) -> list[MetadataVersion]:
+        def save_versions_side_effect(org_id, versions: list[MetadataVersion]) -> list[MetadataVersion]:
             for v in versions:
                 v.id = uuid.uuid4()
             return versions
-        mock_repo.save_many.side_effect = save_many_side_effect
+        mock_repo.save_versions.side_effect = save_versions_side_effect
 
         result = await stage.execute(ctx)
 
@@ -527,7 +531,7 @@ class TestErrorHandling:
 class TestDuplicateHandling:
     @pytest.mark.asyncio
     async def test_duplicate_type_name_same_fingerprint_skipped(self, stage: PersistenceStage, mock_repo: AsyncMock) -> None:
-        mock_repo.list_by_organization.return_value = [
+        mock_repo.list_versions_by_organization.return_value = [
             _version(component_type="ApexClass", component_name="Dup", version_number=2, fingerprint="fp_dup"),
         ]
 
@@ -538,18 +542,18 @@ class TestDuplicateHandling:
 
         assert result.persistence_result["skipped"] == 2
         assert result.persistence_result["saved"] == 0
-        mock_repo.save_many.assert_not_called()
+        mock_repo.save_versions.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_duplicate_type_name_different_fingerprint_saves_once(self, stage: PersistenceStage, mock_repo: AsyncMock) -> None:
         doc = _normalized_dict(api_name="Dup", type_name="ApexClass", fingerprint="fp_first")
         ctx = _make_context(normalized_components=[doc, doc])
 
-        def save_many_side_effect(versions: list[MetadataVersion]) -> list[MetadataVersion]:
+        def save_versions_side_effect(org_id, versions: list[MetadataVersion]) -> list[MetadataVersion]:
             for v in versions:
                 v.id = uuid.uuid4()
             return versions
-        mock_repo.save_many.side_effect = save_many_side_effect
+        mock_repo.save_versions.side_effect = save_versions_side_effect
 
         result = await stage.execute(ctx)
 
@@ -568,11 +572,11 @@ class TestMissingFieldHandling:
         doc = _normalized_dict(api_name="", type_name="ApexClass")
         ctx = _make_context(normalized_components=[doc])
 
-        def save_many_side_effect(versions: list[MetadataVersion]) -> list[MetadataVersion]:
+        def save_versions_side_effect(org_id, versions: list[MetadataVersion]) -> list[MetadataVersion]:
             for v in versions:
                 v.id = uuid.uuid4()
             return versions
-        mock_repo.save_many.side_effect = save_many_side_effect
+        mock_repo.save_versions.side_effect = save_versions_side_effect
 
         result = await stage.execute(ctx)
 
@@ -584,11 +588,11 @@ class TestMissingFieldHandling:
         doc = _normalized_dict(api_name="Test", type_name="")
         ctx = _make_context(normalized_components=[doc])
 
-        def save_many_side_effect(versions: list[MetadataVersion]) -> list[MetadataVersion]:
+        def save_versions_side_effect(org_id, versions: list[MetadataVersion]) -> list[MetadataVersion]:
             for v in versions:
                 v.id = uuid.uuid4()
             return versions
-        mock_repo.save_many.side_effect = save_many_side_effect
+        mock_repo.save_versions.side_effect = save_versions_side_effect
 
         result = await stage.execute(ctx)
 
@@ -601,12 +605,12 @@ class TestMissingFieldHandling:
         ctx = _make_context(normalized_components=[doc])
 
         captured: list[MetadataVersion] = []
-        async def capture(versions: list[MetadataVersion]) -> list[MetadataVersion]:
+        async def capture(org_id, versions: list[MetadataVersion]) -> list[MetadataVersion]:
             for v in versions:
                 v.id = uuid.uuid4()
                 captured.append(v)
             return versions
-        mock_repo.save_many.side_effect = capture
+        mock_repo.save_versions.side_effect = capture
 
         await stage.execute(ctx)
 
@@ -633,11 +637,11 @@ class TestPersistenceResultContract:
         doc = _normalized_dict(api_name="Test", type_name="ApexClass")
         ctx = _make_context(normalized_components=[doc])
 
-        def save_many_side_effect(versions: list[MetadataVersion]) -> list[MetadataVersion]:
+        def save_versions_side_effect(org_id, versions: list[MetadataVersion]) -> list[MetadataVersion]:
             for v in versions:
                 v.id = uuid.uuid4()
             return versions
-        mock_repo.save_many.side_effect = save_many_side_effect
+        mock_repo.save_versions.side_effect = save_versions_side_effect
 
         result = await stage.execute(ctx)
 
@@ -658,12 +662,12 @@ class TestSavedVersionsContract:
         ctx = _make_context(normalized_components=[doc])
 
         saved_versions_list: list[MetadataVersion] = []
-        async def capture(versions: list[MetadataVersion]) -> list[MetadataVersion]:
+        async def capture(org_id, versions: list[MetadataVersion]) -> list[MetadataVersion]:
             for v in versions:
                 v.id = uuid.uuid4()
                 saved_versions_list.append(v)
             return saved_versions_list
-        mock_repo.save_many.side_effect = capture
+        mock_repo.save_versions.side_effect = capture
 
         result = await stage.execute(ctx)
 
@@ -687,11 +691,11 @@ class TestRegressionTests:
         canon = _canonical_component(api_name="LegacyClass", type_name="ApexClass")
         ctx = _make_context(canonical_components=[canon])
 
-        def save_many_side_effect(versions: list[MetadataVersion]) -> list[MetadataVersion]:
+        def save_versions_side_effect(org_id, versions: list[MetadataVersion]) -> list[MetadataVersion]:
             for v in versions:
                 v.id = uuid.uuid4()
             return versions
-        mock_repo.save_many.side_effect = save_many_side_effect
+        mock_repo.save_versions.side_effect = save_versions_side_effect
 
         result = await stage.execute(ctx)
 
@@ -707,14 +711,14 @@ class TestRegressionTests:
         ]
         ctx = _make_context(normalized_components=docs)
 
-        def save_many_side_effect(versions: list[MetadataVersion]) -> list[MetadataVersion]:
+        def save_versions_side_effect(org_id, versions: list[MetadataVersion]) -> list[MetadataVersion]:
             for v in versions:
                 v.id = uuid.uuid4()
             return versions
-        mock_repo.save_many.side_effect = save_many_side_effect
+        mock_repo.save_versions.side_effect = save_versions_side_effect
 
         result1 = await stage.execute(ctx)
-        mock_repo.list_by_organization.return_value = result1.saved_versions
+        mock_repo.list_versions_by_organization.return_value = result1.saved_versions
 
         ctx2 = _make_context(normalized_components=docs)
         result2 = await stage.execute(ctx2)

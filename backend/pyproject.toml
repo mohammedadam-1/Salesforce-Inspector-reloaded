@@ -65,6 +65,7 @@ markers = [
     "api: API endpoint tests",
     "audit: Inspector AI readiness and grounding audit tests",
     "security: Security tests",
+    "performance: Performance tests (query-count / timing bounds)",
     "slow: Tests that take more than 5 seconds",
 ]
 

@@ -134,8 +134,9 @@ def _rel(
 @pytest.fixture
 def mock_version_repo() -> AsyncMock:
     repo = AsyncMock()
-    repo.list_by_organization.return_value = []
-    repo.save_many.side_effect = lambda versions: versions
+    repo.list_versions_by_organization.return_value = []
+    repo.save_versions.side_effect = lambda org_id, versions: versions
+    repo.save_batch.side_effect = lambda org_id, components: components
     return repo
 
 
@@ -175,7 +176,7 @@ def ctx() -> PipelineContext:
 
 @pytest.fixture
 def persistence_stage(mock_version_repo: AsyncMock) -> PersistenceStage:
-    return PersistenceStage(version_repo=mock_version_repo)
+    return PersistenceStage(metadata_repo=mock_version_repo)
 
 
 @pytest.fixture
@@ -388,7 +389,7 @@ class TestNormalizationBoundary:
     async def test_persistence_receives_only_dicts(
         self, mock_version_repo: AsyncMock,
     ) -> None:
-        stage = PersistenceStage(version_repo=mock_version_repo)
+        stage = PersistenceStage(metadata_repo=mock_version_repo)
         docs = [_doc("Account", "CustomObject"), _doc("Contact", "CustomObject")]
         ctx = PipelineContext(
             organization_id=UUID(ORG_ID), connection_id=UUID(CONN_ID),
@@ -396,9 +397,9 @@ class TestNormalizationBoundary:
             normalized_components=docs,
         )
         await stage.execute(ctx)
-        call_args = mock_version_repo.save_many.call_args
+        call_args = mock_version_repo.save_versions.call_args
         assert call_args is not None
-        versions = call_args[0][0]
+        versions = call_args[0][1]
         for v in versions:
             payload = v.payload
             assert isinstance(payload, dict)
@@ -438,7 +439,7 @@ class TestPersistenceVerification:
     async def test_fingerprint_stable_and_deterministic(
         self, mock_version_repo: AsyncMock,
     ) -> None:
-        stage = PersistenceStage(version_repo=mock_version_repo)
+        stage = PersistenceStage(metadata_repo=mock_version_repo)
         fp = uuid.uuid4().hex
         docs = [
             _doc("Account", "CustomObject", fingerprint=fp),
@@ -451,7 +452,7 @@ class TestPersistenceVerification:
         r1 = await stage.execute(ctx)
         assert r1.persistence_result["saved"] == 1
 
-        mock_version_repo.list_by_organization.return_value = [
+        mock_version_repo.list_versions_by_organization.return_value = [
             type("V", (), {
                 "component_type": "CustomObject", "component_name": "Account",
                 "version_number": 1,
@@ -466,7 +467,7 @@ class TestPersistenceVerification:
     async def test_version_history_increments(
         self, mock_version_repo: AsyncMock,
     ) -> None:
-        stage = PersistenceStage(version_repo=mock_version_repo)
+        stage = PersistenceStage(metadata_repo=mock_version_repo)
         existing = [
             type("V", (), {
                 "component_type": "CustomObject", "component_name": "Account",
@@ -474,7 +475,7 @@ class TestPersistenceVerification:
                 "payload": {"fingerprint": "old_fp"},
             })(),
         ]
-        mock_version_repo.list_by_organization.return_value = existing
+        mock_version_repo.list_versions_by_organization.return_value = existing
 
         docs = [_doc("Account", "CustomObject", fingerprint="new_fp")]
         ctx = PipelineContext(
@@ -483,7 +484,7 @@ class TestPersistenceVerification:
             normalized_components=docs,
         )
         await stage.execute(ctx)
-        saved = mock_version_repo.save_many.call_args[0][0]
+        saved = mock_version_repo.save_versions.call_args[0][1]
         assert len(saved) == 1
         assert saved[0].version_number == 2
 
@@ -491,7 +492,7 @@ class TestPersistenceVerification:
     async def test_duplicate_in_batch_skipped(
         self, mock_version_repo: AsyncMock,
     ) -> None:
-        stage = PersistenceStage(version_repo=mock_version_repo)
+        stage = PersistenceStage(metadata_repo=mock_version_repo)
         fp = uuid.uuid4().hex
         docs = [
             _doc("Account", "CustomObject", fingerprint=fp),
@@ -511,7 +512,7 @@ class TestPersistenceVerification:
     async def test_missing_api_name_or_type_skipped(
         self, mock_version_repo: AsyncMock,
     ) -> None:
-        stage = PersistenceStage(version_repo=mock_version_repo)
+        stage = PersistenceStage(metadata_repo=mock_version_repo)
         docs = [
             _doc("Good", "CustomObject"),
             {"identity": "bad", "type": "NoApiName"},
@@ -530,7 +531,7 @@ class TestPersistenceVerification:
     async def test_empty_components_list(
         self, mock_version_repo: AsyncMock,
     ) -> None:
-        stage = PersistenceStage(version_repo=mock_version_repo)
+        stage = PersistenceStage(metadata_repo=mock_version_repo)
         ctx = PipelineContext(
             organization_id=UUID(ORG_ID), connection_id=UUID(CONN_ID),
             sync_job_id=UUID(JOB_ID), component_type="Test",
@@ -545,8 +546,8 @@ class TestPersistenceVerification:
     async def test_batch_save_failure_reported(
         self, mock_version_repo: AsyncMock,
     ) -> None:
-        mock_version_repo.save_many.side_effect = Exception("DB connection lost")
-        stage = PersistenceStage(version_repo=mock_version_repo)
+        mock_version_repo.save_versions.side_effect = Exception("DB connection lost")
+        stage = PersistenceStage(metadata_repo=mock_version_repo)
         docs = [_doc("A", "CustomObject"), _doc("B", "CustomObject")]
         ctx = PipelineContext(
             organization_id=UUID(ORG_ID), connection_id=UUID(CONN_ID),
@@ -561,7 +562,7 @@ class TestPersistenceVerification:
     async def test_fallback_to_canonical_when_no_normalized(
         self, mock_version_repo: AsyncMock,
     ) -> None:
-        stage = PersistenceStage(version_repo=mock_version_repo)
+        stage = PersistenceStage(metadata_repo=mock_version_repo)
         ctx = PipelineContext(
             organization_id=UUID(ORG_ID), connection_id=UUID(CONN_ID),
             sync_job_id=UUID(JOB_ID), component_type="Test",
@@ -951,7 +952,7 @@ class TestIncrementalUpdateVerification:
     async def test_initial_sync(
         self, mock_version_repo: AsyncMock,
     ) -> None:
-        stage = PersistenceStage(version_repo=mock_version_repo)
+        stage = PersistenceStage(metadata_repo=mock_version_repo)
         docs = [
             _doc("Account", "CustomObject", fingerprint="fp1"),
             _doc("Contact", "CustomObject", fingerprint="fp2"),
@@ -968,8 +969,8 @@ class TestIncrementalUpdateVerification:
     async def test_second_sync_no_changes(
         self, mock_version_repo: AsyncMock,
     ) -> None:
-        stage = PersistenceStage(version_repo=mock_version_repo)
-        mock_version_repo.list_by_organization.return_value = [
+        stage = PersistenceStage(metadata_repo=mock_version_repo)
+        mock_version_repo.list_versions_by_organization.return_value = [
             type("V", (), {
                 "component_type": "CustomObject", "component_name": "Account",
                 "version_number": 1,
@@ -998,8 +999,8 @@ class TestIncrementalUpdateVerification:
     async def test_third_sync_with_modifications(
         self, mock_version_repo: AsyncMock,
     ) -> None:
-        stage = PersistenceStage(version_repo=mock_version_repo)
-        mock_version_repo.list_by_organization.return_value = [
+        stage = PersistenceStage(metadata_repo=mock_version_repo)
+        mock_version_repo.list_versions_by_organization.return_value = [
             type("V", (), {
                 "component_type": "CustomObject", "component_name": "Account",
                 "version_number": 1,
@@ -1106,8 +1107,8 @@ class TestErrorRecoveryVerification:
     async def test_pipeline_recovery_after_stage_failure(
         self, mock_version_repo: AsyncMock,
     ) -> None:
-        stage = PersistenceStage(version_repo=mock_version_repo)
-        mock_version_repo.save_many.side_effect = Exception("Transient failure")
+        stage = PersistenceStage(metadata_repo=mock_version_repo)
+        mock_version_repo.save_versions.side_effect = Exception("Transient failure")
         docs = [_doc("A", "CustomObject")]
         ctx = PipelineContext(
             organization_id=UUID(ORG_ID), connection_id=UUID(CONN_ID),
@@ -1118,7 +1119,7 @@ class TestErrorRecoveryVerification:
         assert r.persistence_result["saved"] == 0
         assert len(r.errors) > 0
 
-        mock_version_repo.save_many.side_effect = lambda versions: versions
+        mock_version_repo.save_versions.side_effect = lambda org_id, versions: versions
         r2 = await stage.execute(ctx)
         assert r2.persistence_result["saved"] == 1
 
@@ -1128,7 +1129,7 @@ class TestErrorRecoveryVerification:
         mapper: CanonicalMapper, validator: CanonicalMetadataValidator,
         mock_version_repo: AsyncMock,
     ) -> None:
-        stage = PersistenceStage(version_repo=mock_version_repo)
+        stage = PersistenceStage(metadata_repo=mock_version_repo)
         ctx = PipelineContext(
             organization_id=UUID(ORG_ID), connection_id=UUID(CONN_ID),
             sync_job_id=UUID(JOB_ID), component_type="Error",
@@ -1142,8 +1143,8 @@ class TestErrorRecoveryVerification:
     async def test_stage_exception_does_not_crash_pipeline(
         self, mock_version_repo: AsyncMock,
     ) -> None:
-        stage = PersistenceStage(version_repo=mock_version_repo)
-        mock_version_repo.save_many.side_effect = Exception("Crash")
+        stage = PersistenceStage(metadata_repo=mock_version_repo)
+        mock_version_repo.save_versions.side_effect = Exception("Crash")
         docs = [_doc("A", "CustomObject")]
         ctx = PipelineContext(
             organization_id=UUID(ORG_ID), connection_id=UUID(CONN_ID),
@@ -1167,7 +1168,7 @@ class TestPerformanceVerification:
     async def test_large_batch_persistence(
         self, mock_version_repo: AsyncMock,
     ) -> None:
-        stage = PersistenceStage(version_repo=mock_version_repo)
+        stage = PersistenceStage(metadata_repo=mock_version_repo)
         n = 5000
         docs = [_doc(f"O{i}", "CustomObject") for i in range(n)]
         ctx = PipelineContext(
@@ -1344,8 +1345,8 @@ class TestObservabilityVerification:
     async def test_errors_propagate_to_result(
         self, mock_version_repo: AsyncMock,
     ) -> None:
-        stage = PersistenceStage(version_repo=mock_version_repo)
-        mock_version_repo.save_many.side_effect = Exception("Fail")
+        stage = PersistenceStage(metadata_repo=mock_version_repo)
+        mock_version_repo.save_versions.side_effect = Exception("Fail")
         docs = [_doc("A", "CustomObject")]
         ctx = PipelineContext(
             organization_id=UUID(ORG_ID), connection_id=UUID(CONN_ID),

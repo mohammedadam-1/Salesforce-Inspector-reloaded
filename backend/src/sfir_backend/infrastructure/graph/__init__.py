@@ -2,6 +2,9 @@ from sfir_backend.infrastructure.graph.builder import GraphBuilder
 from sfir_backend.infrastructure.graph.cache import GraphCacheCoordinator
 from sfir_backend.infrastructure.graph.cycle import CycleDetectionEngine
 from sfir_backend.infrastructure.graph.engine import DependencyGraphEngine
+from sfir_backend.infrastructure.graph.repository_builder import (
+    RepositoryGraphBuilder,
+)
 from sfir_backend.infrastructure.graph.resolver import DependencyResolver
 from sfir_backend.infrastructure.graph.statistics import GraphStatistics
 from sfir_backend.infrastructure.graph.traversal import GraphTraversalEngine
@@ -18,4 +21,5 @@ __all__ = [
     "GraphTraversalEngine",
     "GraphValidator",
     "GraphVersionManager",
+    "RepositoryGraphBuilder",
 ]

@@ -9,6 +9,7 @@ from sfir_backend.api.deps import (
     get_current_org_id,
     get_current_user_id,
     get_graph_service,
+    get_request_context,
     get_rbac_service,
 )
 from sfir_backend.api.dto.impact import (
@@ -18,8 +19,11 @@ from sfir_backend.api.dto.impact import (
     ImpactReport,
     ImpactSimulateRequest,
 )
-from sfir_backend.application.use_cases.graph.service import GraphService
+from sfir_backend.application.use_cases.graph.repository_service import (
+    RepositoryGraphService,
+)
 from sfir_backend.application.use_cases.rbac import RBACUseCase
+from sfir_backend.domain.request_context import RequestContext
 
 router = APIRouter(prefix="/impact-analysis", tags=["Impact Analysis"])
 
@@ -30,13 +34,14 @@ async def run_impact_analysis(
     org_id: uuid.UUID | None = Depends(get_current_org_id),
     _user_id: uuid.UUID = Depends(get_current_user_id),
     rbac: RBACUseCase = Depends(get_rbac_service),
-    graph_service: GraphService = Depends(get_graph_service),
+    graph_service: RepositoryGraphService = Depends(get_graph_service),
+    request_context: RequestContext = Depends(get_request_context),
 ) -> ImpactAnalysisResponse:
     if not org_id:
         from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="Organization context required")
     await rbac.require_permission(_user_id, org_id, "impact:analyze")
-    graph = await graph_service.build_graph(org_id)
+    graph = await graph_service.build_graph(org_id, request_context=request_context)
     impacted = await graph_service.find_impact(
         graph, request.component_type, request.component_name, request.max_depth,
     )
@@ -65,12 +70,13 @@ async def simulate_impact(
     org_id: uuid.UUID | None = Depends(get_current_org_id),
     _user_id: uuid.UUID = Depends(get_current_user_id),
     _rbac: RBACUseCase = Depends(get_rbac_service),
-    graph_service: GraphService = Depends(get_graph_service),
+    graph_service: RepositoryGraphService = Depends(get_graph_service),
+    request_context: RequestContext = Depends(get_request_context),
 ) -> ImpactAnalysisResponse:
     if not org_id:
         from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="Organization context required")
-    graph = await graph_service.build_graph(org_id)
+    graph = await graph_service.build_graph(org_id, request_context=request_context)
     impacted = await graph_service.find_impact(
         graph, request.component_type, request.component_name, request.max_depth,
     )

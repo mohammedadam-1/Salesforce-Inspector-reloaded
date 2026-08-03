@@ -255,3 +255,40 @@ class GraphTraversalEngine:
                 queue.append((edge.target_id, d + 1))
 
         return sub
+
+    # ── Phase 4 traversal ops ──────────────────────────────────
+
+    def get_neighbors(
+        self,
+        graph: Graph,
+        node_key: str,
+        depth: int = 1,
+    ) -> list[GraphNode]:
+        """Return nodes adjacent to ``node_key`` (undirected, up to depth)."""
+        return graph.get_neighbors(node_key, max_depth=depth)
+
+    def find_path(
+        self,
+        graph: Graph,
+        source_key: str,
+        target_key: str,
+    ) -> list[str] | None:
+        """Return any path (list of node keys) from source to target, or None."""
+        return graph.find_path(source_key, target_key)
+
+    def connected_components(self, graph: Graph) -> list[list[str]]:
+        """Return connected components as lists of node keys (undirected)."""
+        return graph.connected_components()
+
+    def get_subgraph(
+        self,
+        graph: Graph,
+        node_key: str,
+        depth: int = 1,
+    ) -> Graph:
+        """Return a subgraph rooted at ``node_key`` expanded to ``depth``."""
+        return graph.get_subgraph(node_key, max_depth=depth)
+
+    def export(self, graph: Graph) -> dict:
+        """Export the graph as a JSON-serializable dict."""
+        return graph.export()

@@ -11,7 +11,9 @@ from sfir_backend.application.use_cases.ai.conversation_manager import (
 )
 from sfir_backend.application.use_cases.ai.orchestrator import AIOrchestrator
 from sfir_backend.application.use_cases.auth import AuthUseCase
-from sfir_backend.application.use_cases.graph.service import GraphService
+from sfir_backend.application.use_cases.graph.repository_service import (
+    RepositoryGraphService,
+)
 from sfir_backend.application.use_cases.metadata_sync import SyncCoordinator
 from sfir_backend.application.use_cases.organization import OrganizationUseCase
 from sfir_backend.application.use_cases.rbac import RBACUseCase
@@ -155,7 +157,7 @@ async def get_sync_coordinator(
 async def get_graph_service(
     container: Container = Depends(get_container),
     db: AsyncSession = Depends(get_db),
-) -> GraphService:
+) -> RepositoryGraphService:
     return container.create_graph_service(db)
 
 

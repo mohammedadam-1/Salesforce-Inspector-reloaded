@@ -242,8 +242,9 @@ def production_metadata_with_relationships() -> list[dict[str, Any]]:
 @pytest.fixture
 def mock_version_repo() -> AsyncMock:
     repo = AsyncMock()
-    repo.list_by_organization.return_value = []
-    repo.save_many.side_effect = lambda versions: versions
+    repo.list_versions_by_organization.return_value = []
+    repo.save_versions.side_effect = lambda org_id, versions: versions
+    repo.save_batch.side_effect = lambda org_id, components: components
     return repo
 
 
@@ -259,7 +260,7 @@ def search_engine() -> SearchEngine:
 
 @pytest.fixture
 def persistence_stage(mock_version_repo: AsyncMock) -> PersistenceStage:
-    return PersistenceStage(version_repo=mock_version_repo)
+    return PersistenceStage(metadata_repo=mock_version_repo)
 
 
 @pytest.fixture
@@ -425,7 +426,7 @@ class TestNormalizationBoundary:
         self,
         mock_version_repo: AsyncMock,
     ) -> None:
-        stage = PersistenceStage(version_repo=mock_version_repo)
+        stage = PersistenceStage(metadata_repo=mock_version_repo)
         docs = [
             _doc("Account", "CustomObject"),
             _doc("Contact", "CustomObject"),
@@ -438,9 +439,9 @@ class TestNormalizationBoundary:
             normalized_components=docs,
         )
         await stage.execute(context)
-        call_args = mock_version_repo.save_many.call_args
+        call_args = mock_version_repo.save_versions.call_args
         assert call_args is not None
-        versions = call_args[0][0]
+        versions = call_args[0][1]
         for v in versions:
             payload = v.payload
             assert isinstance(payload, dict)
@@ -462,10 +463,10 @@ class TestIncrementalUpdates:
         self,
         mock_version_repo: AsyncMock,
     ) -> None:
-        stage = PersistenceStage(version_repo=mock_version_repo)
+        stage = PersistenceStage(metadata_repo=mock_version_repo)
 
         # First sync: persists everything
-        mock_version_repo.list_by_organization.return_value = []
+        mock_version_repo.list_versions_by_organization.return_value = []
         docs1 = [
             _doc("Account", "CustomObject", fingerprint="fp1"),
             _doc("Contact", "CustomObject", fingerprint="fp2"),
@@ -483,7 +484,7 @@ class TestIncrementalUpdates:
     async def test_second_sync_with_modifications(
         self, mock_version_repo: AsyncMock,
     ) -> None:
-        stage = PersistenceStage(version_repo=mock_version_repo)
+        stage = PersistenceStage(metadata_repo=mock_version_repo)
 
         # Build existing state
         existing = [
@@ -500,7 +501,7 @@ class TestIncrementalUpdates:
                 "payload": {"fingerprint": "fp2"},
             })(),
         ]
-        mock_version_repo.list_by_organization.return_value = existing
+        mock_version_repo.list_versions_by_organization.return_value = existing
 
         # Account unchanged (same fp), Contact modified (new fp), NewObject added
         docs2 = [

@@ -40,13 +40,29 @@ class NodeType(StrEnum):
 
 
 class EdgeType(StrEnum):
-    USES = "uses"
+    # ── Canonical edge types (Phase 4) ─────────────────────────
     REFERENCES = "references"
+    USES = "uses"
+    CALLS = "calls"
     CONTAINS = "contains"
-    OWNS = "owns"
-    INVOKES = "invokes"
     EXTENDS = "extends"
     IMPLEMENTS = "implements"
+    LOOKUP_TO = "lookup_to"
+    MASTER_DETAIL_TO = "master_detail_to"
+    USES_FIELD = "uses_field"
+    USES_OBJECT = "uses_object"
+    USES_FLOW = "uses_flow"
+    USES_TRIGGER = "uses_trigger"
+    USES_REPORT = "uses_report"
+    USES_LAYOUT = "uses_layout"
+    USES_DASHBOARD = "uses_dashboard"
+    USES_PERMISSION = "uses_permission"
+    USES_PROFILE = "uses_profile"
+    IMPORTS = "imports"
+    DEPENDS_ON = "depends_on"
+    # ── Legacy aliases (kept for API compatibility) ────────────
+    OWNS = "owns"
+    INVOKES = "invokes"
     LOOKUP = "lookup"
     MASTER_DETAIL = "master_detail"
     FORMULA_REFERENCE = "formula_reference"
@@ -108,10 +124,10 @@ class Graph(BaseModel):
     def add_edge(self, edge: GraphEdge) -> None:
         if isinstance(edge, DependencyEdge):
             edge = edge.to_graph_edge()
-        if edge.id and edge.id in self.edges:
-            return
         if not edge.id:
             edge.id = f"{edge.source_id}--[{edge.edge_type.value}]-->{edge.target_id}"
+        if edge.id in self.edges:
+            return
         self.edges[edge.id] = edge
         self.outgoing.setdefault(edge.source_id, []).append(edge.id)
         self.incoming.setdefault(edge.target_id, []).append(edge.id)
@@ -177,6 +193,122 @@ class Graph(BaseModel):
         self.nodes.pop(node_key, None)
         self.outgoing.pop(node_key, None)
         self.incoming.pop(node_key, None)
+
+    # ── Phase 4 traversal ops ──────────────────────────────────
+
+    def get_neighbors(self, node_key: str, max_depth: int = 1) -> list[GraphNode]:
+        """Return nodes adjacent to ``node_key`` (undirected, up to depth)."""
+        visited: set[str] = set()
+        result: list[GraphNode] = []
+        queue: list[tuple[str, int]] = [(node_key, 0)]
+        while queue:
+            key, depth = queue.pop(0)
+            if key in visited or depth > max_depth:
+                continue
+            visited.add(key)
+            if depth > 0:
+                node = self.nodes.get(key)
+                if node:
+                    result.append(node)
+            if depth < max_depth:
+                for edge_id in self.outgoing.get(key, []):
+                    edge = self.edges.get(edge_id)
+                    if edge and edge.target_id not in visited:
+                        queue.append((edge.target_id, depth + 1))
+                for edge_id in self.incoming.get(key, []):
+                    edge = self.edges.get(edge_id)
+                    if edge and edge.source_id not in visited:
+                        queue.append((edge.source_id, depth + 1))
+        return result
+
+    def get_dependencies(self, node_key: str, max_depth: int = 1) -> list[GraphNode]:
+        """Return the nodes this node depends on (outgoing, upstream)."""
+        return self.get_upstream(node_key, max_depth)
+
+    def get_dependents(self, node_key: str, max_depth: int = 1) -> list[GraphNode]:
+        """Return the nodes that depend on this node (incoming, downstream)."""
+        return self.get_downstream(node_key, max_depth)
+
+    def find_path(self, source_key: str, target_key: str) -> list[str] | None:
+        """Return any path (list of node keys) from source to target, or None."""
+        if source_key not in self.nodes or target_key not in self.nodes:
+            return None
+        if source_key == target_key:
+            return [source_key]
+        visited: set[str] = set()
+        stack: list[tuple[str, list[str]]] = [(source_key, [source_key])]
+        while stack:
+            current, path = stack.pop()
+            if current in visited:
+                continue
+            visited.add(current)
+            for edge_id in self.outgoing.get(current, []):
+                edge = self.edges.get(edge_id)
+                if edge is None or edge.target_id in visited:
+                    continue
+                new_path = [*path, edge.target_id]
+                if edge.target_id == target_key:
+                    return new_path
+                stack.append((edge.target_id, new_path))
+        return None
+
+    def connected_components(self) -> list[list[str]]:
+        """Return connected components as lists of node keys (undirected)."""
+        visited: set[str] = set()
+        components: list[list[str]] = []
+        for start in self.nodes:
+            if start in visited:
+                continue
+            component: list[str] = []
+            queue: list[str] = [start]
+            visited.add(start)
+            while queue:
+                current = queue.pop(0)
+                component.append(current)
+                for edge_id in self.outgoing.get(current, []):
+                    edge = self.edges.get(edge_id)
+                    if edge and edge.target_id not in visited:
+                        visited.add(edge.target_id)
+                        queue.append(edge.target_id)
+                for edge_id in self.incoming.get(current, []):
+                    edge = self.edges.get(edge_id)
+                    if edge and edge.source_id not in visited:
+                        visited.add(edge.source_id)
+                        queue.append(edge.source_id)
+            components.append(component)
+        return components
+
+    def get_subgraph(self, node_key: str, max_depth: int = 1) -> "Graph":
+        """Return a subgraph rooted at ``node_key`` expanded to ``max_depth``."""
+        sub = Graph(version=self.version, created_at=self.created_at)
+        visited: set[str] = set()
+        queue: list[tuple[str, int]] = [(node_key, 0)]
+        while queue:
+            key, depth = queue.pop(0)
+            if key in visited or depth > max_depth:
+                continue
+            visited.add(key)
+            node = self.nodes.get(key)
+            if node:
+                sub.add_node(node)
+            if depth < max_depth:
+                for edge_id in self.outgoing.get(key, []):
+                    edge = self.edges.get(edge_id)
+                    if edge is None:
+                        continue
+                    sub.add_edge(edge)
+                    queue.append((edge.target_id, depth + 1))
+                for edge_id in self.incoming.get(key, []):
+                    edge = self.edges.get(edge_id)
+                    if edge is None:
+                        continue
+                    sub.add_edge(edge)
+                    queue.append((edge.source_id, depth + 1))
+        return sub
+
+    def export(self) -> dict[str, Any]:
+        """Export the graph as a JSON-serializable dict."""
+        return self.model_dump(mode="json")
 
     def _remove_edge(self, edge_id: str) -> None:
         edge = self.edges.pop(edge_id, None)
@@ -254,6 +386,20 @@ class DependencyType(StrEnum):
     USES_CLASS = "uses_class"
     EXTENDS = "extends"
     IMPLEMENTS = "implements"
+    REFERENCES = "references"
+    CALLS = "calls"
+    CONTAINS = "contains"
+    LOOKUP_TO = "lookup_to"
+    MASTER_DETAIL_TO = "master_detail_to"
+    USES_FLOW = "uses_flow"
+    USES_TRIGGER = "uses_trigger"
+    USES_REPORT = "uses_report"
+    USES_LAYOUT = "uses_layout"
+    USES_DASHBOARD = "uses_dashboard"
+    USES_PERMISSION = "uses_permission"
+    USES_PROFILE = "uses_profile"
+    IMPORTS = "imports"
+    DEPENDS_ON = "depends_on"
 
 
 _NODE_TYPE_MAP: dict[str, NodeType] = {
@@ -265,14 +411,51 @@ _NODE_TYPE_MAP: dict[str, NodeType] = {
     "ValidationRule": NodeType.VALIDATION_RULE,
     "Profile": NodeType.PROFILE,
     "PermissionSet": NodeType.PERMISSION_SET,
+    "Object": NodeType.OBJECT,
+    "Field": NodeType.FIELD,
+    "Trigger": NodeType.TRIGGER,
+    "Flow": NodeType.FLOW,
+    "Report": NodeType.REPORT,
+    "Dashboard": NodeType.DASHBOARD,
+    "Workflow": NodeType.WORKFLOW,
+    "Role": NodeType.ROLE,
+    "Queue": NodeType.QUEUE,
+    "PublicGroup": NodeType.PUBLIC_GROUP,
+    "SharingRule": NodeType.SHARING_RULE,
+    "GlobalValueSet": NodeType.GLOBAL_VALUE_SET,
+    "RecordType": NodeType.RECORD_TYPE,
+    "Formula": NodeType.FORMULA,
+    "CustomMetadata": NodeType.CUSTOM_METADATA,
+    "CustomSetting": NodeType.CUSTOM_SETTING,
+    "LightningPage": NodeType.LIGHTNING_PAGE,
+    "QuickAction": NodeType.QUICK_ACTION,
+    "EmailTemplate": NodeType.EMAIL_TEMPLATE,
+    "NamedCredential": NodeType.NAMED_CREDENTIAL,
+    "ConnectedApp": NodeType.CONNECTED_APP,
+    "ApprovalProcess": NodeType.APPROVAL_PROCESS,
+    "Relationship": NodeType.RELATIONSHIP,
 }
 
 _EDGE_TYPE_MAP: dict[DependencyType, EdgeType] = {
-    DependencyType.USES_OBJECT: EdgeType.USES,
-    DependencyType.USES_FIELD: EdgeType.REFERENCES,
+    DependencyType.USES_OBJECT: EdgeType.USES_OBJECT,
+    DependencyType.USES_FIELD: EdgeType.USES_FIELD,
     DependencyType.USES_CLASS: EdgeType.REFERENCES,
     DependencyType.EXTENDS: EdgeType.EXTENDS,
     DependencyType.IMPLEMENTS: EdgeType.IMPLEMENTS,
+    DependencyType.REFERENCES: EdgeType.REFERENCES,
+    DependencyType.CALLS: EdgeType.CALLS,
+    DependencyType.CONTAINS: EdgeType.CONTAINS,
+    DependencyType.LOOKUP_TO: EdgeType.LOOKUP_TO,
+    DependencyType.MASTER_DETAIL_TO: EdgeType.MASTER_DETAIL_TO,
+    DependencyType.USES_FLOW: EdgeType.USES_FLOW,
+    DependencyType.USES_TRIGGER: EdgeType.USES_TRIGGER,
+    DependencyType.USES_REPORT: EdgeType.USES_REPORT,
+    DependencyType.USES_LAYOUT: EdgeType.USES_LAYOUT,
+    DependencyType.USES_DASHBOARD: EdgeType.USES_DASHBOARD,
+    DependencyType.USES_PERMISSION: EdgeType.USES_PERMISSION,
+    DependencyType.USES_PROFILE: EdgeType.USES_PROFILE,
+    DependencyType.IMPORTS: EdgeType.IMPORTS,
+    DependencyType.DEPENDS_ON: EdgeType.DEPENDS_ON,
 }
 
 
