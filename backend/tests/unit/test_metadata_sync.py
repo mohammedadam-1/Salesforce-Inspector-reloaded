@@ -2,7 +2,7 @@
 
 import uuid
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
@@ -35,6 +35,7 @@ from sfir_backend.domain.value_objects.metadata import (
     SyncJobStatus,
     SyncType,
 )
+from sfir_backend.infrastructure.salesforce.oauth import SalesforceOAuthService
 from sfir_backend.infrastructure.salesforce.sync.downloader import (
     MetadataDownloadError,
     MetadataDownloadManager,
@@ -803,6 +804,7 @@ class FakeConnRepo(ISalesforceConnectionRepository):
     async def list_by_organization(self, org_id): return [self._conn]
     async def list_by_user(self, user_id): return [self._conn]
     async def list_active_by_organization(self, org_id): return [self._conn]
+    async def list_active(self): return [self._conn]
     async def save(self, c): return c
     async def update(self, c): return c
     async def delete(self, cid): pass
@@ -850,6 +852,7 @@ class TestSyncCoordinator:
             manifest_generator=self.manifest_gen,
             retry_manager=self.retry_manager,
             recovery=self.recovery,
+            oauth_service=Mock(spec=SalesforceOAuthService),
         )
 
     @pytest.mark.asyncio
@@ -1026,7 +1029,8 @@ class TestSyncCoordinator:
         ):
             result = await self.coordinator.execute_sync(job)
 
-        assert result.status == SyncJobStatus.COMPLETED
+        assert result.status == SyncJobStatus.FAILED
+        assert "aborting sync" in result.error_message
         retry_items = await self.retry_repo.list_pending_by_organization(self.org_id)
         assert len(retry_items) > 0
         assert "API failure" in retry_items[0].last_error

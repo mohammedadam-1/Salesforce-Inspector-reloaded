@@ -80,6 +80,7 @@ from sfir_backend.infrastructure.persistence.models.metadata_sync import (
 from sfir_backend.infrastructure.persistence.models.organization import (
     OrganizationModel,
 )
+from sfir_backend.infrastructure.persistence.models.user import UserModel
 from sfir_backend.infrastructure.persistence.repositories.metadata_repo import (
     SQLAlchemyMetadataRepository,
     _TYPE_TO_CANONICAL_CLASS,
@@ -153,6 +154,12 @@ async def db(engine: AsyncEngine, session_factory: Any) -> AsyncIterator[dict[st
     org_id = uuid.uuid4()
     user_id = uuid.uuid4()
     async with session_factory() as session:
+        session.add(UserModel(
+            id=user_id,
+            email=f"integration-{uuid.uuid4().hex[:8]}@test.local",
+            password_hash="x",
+            display_name="Integration Test User",
+        ))
         session.add(OrganizationModel(
             id=org_id,
             name=TEST_ORG_NAME,

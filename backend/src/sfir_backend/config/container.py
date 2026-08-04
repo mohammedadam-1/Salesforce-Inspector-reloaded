@@ -1052,6 +1052,8 @@ class Container:
         return self._ports[name]
 
     def get_repository(self, name: str) -> Any:
+        if not self._repositories and not self._settings.is_testing:
+            self._repositories = self._make_repos()
         if name not in self._repositories:
             raise KeyError(f"Repository not registered: {name}")
         return self._repositories[name]

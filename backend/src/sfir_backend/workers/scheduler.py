@@ -10,17 +10,19 @@ from sfir_backend.workers.celery import celery_app
 
 celery_app.conf.beat_schedule = {
     "incremental-sync-hourly": {
-        "task": "metadata.incremental_sync",
+        "task": "metadata.dispatch_scheduled_syncs",
         "schedule": crontab(minute=0),
-        "options": {"queue": "metadata"},
+        "args": ["incremental"],
+        "options": {"queue": "default"},
     },
     "full-sync-daily": {
-        "task": "metadata.full_sync",
+        "task": "metadata.dispatch_scheduled_syncs",
         "schedule": crontab(hour=2, minute=0),
-        "options": {"queue": "metadata"},
+        "args": ["full"],
+        "options": {"queue": "default"},
     },
     "stale-detection-quarterly": {
-        "task": "metadata.detect_stale",
+        "task": "metadata.dispatch_stale_detection",
         "schedule": crontab(minute="*/15"),
         "options": {"queue": "default"},
     },

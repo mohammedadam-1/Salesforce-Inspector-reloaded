@@ -919,6 +919,7 @@ class SQLAlchemyMetadataRepository(IMetadataRepository):
         if component.relationships:
             await self._replace_relationships(organization_id, component)
             await self._session.flush()
+        await self._session.commit()
         return _orm_to_component(instance, resolved_type)
 
     async def save_batch(
@@ -953,6 +954,7 @@ class SQLAlchemyMetadataRepository(IMetadataRepository):
                 await self._replace_relationships(organization_id, component)
         if any(c.relationships for c in components):
             await self._session.flush()
+        await self._session.commit()
         for component, instance in zip(components, instances, strict=False):
             results.append(
                 _orm_to_component(instance, _resolve_type(component.type)),
@@ -994,6 +996,7 @@ class SQLAlchemyMetadataRepository(IMetadataRepository):
         if component.relationships:
             await self._replace_relationships(organization_id, component)
             await self._session.flush()
+        await self._session.commit()
         return _orm_to_component(instance, component.type)
 
     async def delete(
@@ -1028,6 +1031,7 @@ class SQLAlchemyMetadataRepository(IMetadataRepository):
                 ),
             )
         await self._session.flush()
+        await self._session.commit()
         return deleted
 
     async def _replace_relationships(
@@ -1213,6 +1217,7 @@ class SQLAlchemyMetadataRepository(IMetadataRepository):
         model = _version_to_orm(version)
         self._session.add(model)
         await self._session.flush()
+        await self._session.commit()
         return _version_orm_to_entity(model)
 
     async def save_versions(
@@ -1222,13 +1227,14 @@ class SQLAlchemyMetadataRepository(IMetadataRepository):
         *,
         request_context: RequestContext | None = None,
     ) -> list[MetadataVersion]:
-        """Persist many versions in a single flush (no per-row commit)."""
+        """Persist many versions in a single flush + commit (no per-row commits)."""
         self._verify_tenant(organization_id, request_context)
         if not versions:
             return []
         models = [_version_to_orm(v) for v in versions]
         self._session.add_all(models)
         await self._session.flush()
+        await self._session.commit()
         return [_version_orm_to_entity(m) for m in models]
 
     async def get_by_type(

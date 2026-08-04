@@ -27,6 +27,9 @@ class ISalesforceConnectionRepository(ABC):
     ) -> list[SalesforceConnection]: ...
 
     @abstractmethod
+    async def list_active(self) -> list[SalesforceConnection]: ...
+
+    @abstractmethod
     async def save(self, connection: SalesforceConnection) -> SalesforceConnection: ...
 
     @abstractmethod

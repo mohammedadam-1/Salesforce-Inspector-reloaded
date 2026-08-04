@@ -61,6 +61,9 @@ services:
       SFIR_CELERY_RESULT_BACKEND: redis://redis:6379/2
       SFIR_JWT_SECRET_KEY: ${SFIR_JWT_SECRET_KEY:-dev-jwt-secret-change-in-production}
       SFIR_ENCRYPTION_KEY: ${SFIR_ENCRYPTION_KEY:-dev-encryption-key-change-in-production-32bytes}
+      SFIR_SALESFORCE_CLIENT_ID: ${SFIR_SALESFORCE_CLIENT_ID:-}
+      SFIR_SALESFORCE_CLIENT_SECRET: ${SFIR_SALESFORCE_CLIENT_SECRET:-}
+      SFIR_SALESFORCE_REDIRECT_URI: ${SFIR_SALESFORCE_REDIRECT_URI:-}
       SFIR_OTLP_ENDPOINT: http://otel-collector:4317
       SFIR_LOG_LEVEL: ${SFIR_LOG_LEVEL:-DEBUG}
     depends_on:
@@ -91,6 +94,9 @@ services:
       SFIR_CELERY_RESULT_BACKEND: redis://redis:6379/2
       SFIR_JWT_SECRET_KEY: ${SFIR_JWT_SECRET_KEY:-dev-jwt-secret-change-in-production}
       SFIR_ENCRYPTION_KEY: ${SFIR_ENCRYPTION_KEY:-dev-encryption-key-change-in-production-32bytes}
+      SFIR_SALESFORCE_CLIENT_ID: ${SFIR_SALESFORCE_CLIENT_ID:-}
+      SFIR_SALESFORCE_CLIENT_SECRET: ${SFIR_SALESFORCE_CLIENT_SECRET:-}
+      SFIR_SALESFORCE_REDIRECT_URI: ${SFIR_SALESFORCE_REDIRECT_URI:-}
       SFIR_OTLP_ENDPOINT: http://otel-collector:4317
       SFIR_LOG_LEVEL: ${SFIR_LOG_LEVEL:-DEBUG}
     depends_on:

@@ -107,6 +107,7 @@ class SyncJobRepository(ISyncJobRepository):
         )
         self._session.add(model)
         await self._session.flush()
+        await self._session.commit()
         return job
 
     async def update(self, job: SyncJob) -> SyncJob:
@@ -125,6 +126,7 @@ class SyncJobRepository(ISyncJobRepository):
         model.completed_at = job.completed_at
         model.updated_at = job.updated_at
         await self._session.flush()
+        await self._session.commit()
         return job
 
     def _to_domain(self, model: SyncJobModel) -> SyncJob:
@@ -220,6 +222,7 @@ class MetadataVersionRepository(IMetadataVersionRepository):
         )
         self._session.add(model)
         await self._session.flush()
+        await self._session.commit()
         return version
 
     async def save_many(self, versions: list[MetadataVersion]) -> list[MetadataVersion]:
@@ -246,6 +249,7 @@ class MetadataVersionRepository(IMetadataVersionRepository):
             models.append(model)
         self._session.add_all(models)
         await self._session.flush()
+        await self._session.commit()
         return versions
 
     async def list_component_types(
@@ -428,6 +432,7 @@ class SyncHistoryRepository(ISyncHistoryRepository):
         )
         self._session.add(model)
         await self._session.flush()
+        await self._session.commit()
         return history
 
     def _to_domain(self, model: SyncHistoryModel) -> SyncHistory:
@@ -504,6 +509,7 @@ class SyncRetryQueueRepository(ISyncRetryQueueRepository):
         )
         self._session.add(model)
         await self._session.flush()
+        await self._session.commit()
         return item
 
     async def update(self, item: SyncRetryQueueItem) -> SyncRetryQueueItem:
@@ -517,6 +523,7 @@ class SyncRetryQueueRepository(ISyncRetryQueueRepository):
         model.status = item.status.value
         model.updated_at = item.updated_at
         await self._session.flush()
+        await self._session.commit()
         return item
 
     def _to_domain(self, model: SyncRetryQueueItemModel) -> SyncRetryQueueItem:
@@ -570,6 +577,7 @@ class SyncStatisticsRepository(ISyncStatisticsRepository):
         )
         self._session.add(model)
         await self._session.flush()
+        await self._session.commit()
         return stats
 
     async def update(self, stats: SyncStatistics) -> SyncStatistics:
@@ -587,6 +595,7 @@ class SyncStatisticsRepository(ISyncStatisticsRepository):
         model.last_successful_sync_at = stats.last_successful_sync_at
         model.updated_at = stats.updated_at
         await self._session.flush()
+        await self._session.commit()
         return stats
 
     def _to_domain(self, model: SyncStatisticsModel) -> SyncStatistics:

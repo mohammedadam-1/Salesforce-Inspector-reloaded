@@ -1,0 +1,22 @@
+SELECT 'organizations', count(*) FROM organizations
+UNION ALL SELECT 'users', count(*) FROM users
+UNION ALL SELECT 'salesforce_connections', count(*) FROM salesforce_connections
+UNION ALL SELECT 'refresh_tokens', count(*) FROM refresh_tokens
+UNION ALL SELECT 'sync_jobs', count(*) FROM sync_jobs
+UNION ALL SELECT 'sync_history', count(*) FROM sync_history
+UNION ALL SELECT 'metadata_versions', count(*) FROM metadata_versions
+UNION ALL SELECT 'audit_logs', count(*) FROM audit_logs
+UNION ALL SELECT 'metadata_objects', count(*) FROM metadata_objects
+UNION ALL SELECT 'metadata_fields', count(*) FROM metadata_fields
+UNION ALL SELECT 'metadata_validation_rules', count(*) FROM metadata_validation_rules
+UNION ALL SELECT 'metadata_apex_classes', count(*) FROM metadata_apex_classes
+UNION ALL SELECT 'metadata_triggers', count(*) FROM metadata_triggers
+UNION ALL SELECT 'metadata_flows', count(*) FROM metadata_flows
+UNION ALL SELECT 'metadata_layouts', count(*) FROM metadata_layouts
+UNION ALL SELECT 'metadata_profiles', count(*) FROM metadata_profiles
+UNION ALL SELECT 'metadata_permission_sets', count(*) FROM metadata_permission_sets
+UNION ALL SELECT 'metadata_reports', count(*) FROM metadata_reports
+UNION ALL SELECT 'metadata_dashboards', count(*) FROM metadata_dashboards
+UNION ALL SELECT 'metadata_relationships', count(*) FROM metadata_relationships
+UNION ALL SELECT 'metadata_dependencies', count(*) FROM metadata_dependencies
+UNION ALL SELECT 'search_documents', count(*) FROM search_documents;

@@ -66,6 +66,13 @@ class SalesforceConnectionRepository(ISalesforceConnectionRepository):
         )
         return [self._to_domain(m) for m in result.scalars().all()]
 
+    async def list_active(self) -> list[SalesforceConnection]:
+        result = await self._session.execute(
+            select(SalesforceConnectionModel)
+            .where(SalesforceConnectionModel.is_active.is_(True)),
+        )
+        return [self._to_domain(m) for m in result.scalars().all()]
+
     async def save(self, connection: SalesforceConnection) -> SalesforceConnection:
         model = SalesforceConnectionModel(
             id=connection.id,
@@ -89,6 +96,7 @@ class SalesforceConnectionRepository(ISalesforceConnectionRepository):
         )
         self._session.add(model)
         await self._session.flush()
+        await self._session.commit()
         return connection
 
     async def update(self, connection: SalesforceConnection) -> SalesforceConnection:
@@ -110,6 +118,7 @@ class SalesforceConnectionRepository(ISalesforceConnectionRepository):
         model.is_active = connection.is_active
         model.updated_at = connection.updated_at
         await self._session.flush()
+        await self._session.commit()
         return connection
 
     async def delete(self, connection_id: uuid.UUID) -> None:

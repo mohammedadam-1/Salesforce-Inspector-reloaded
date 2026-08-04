@@ -34,14 +34,14 @@ async def _execute_sync(
             request, uuid.UUID(organization_id),
         )
         job = await coordinator.get_sync_job(
-            uuid.UUID(response.id), uuid.UUID(organization_id),
+            uuid.UUID(str(response.id)), uuid.UUID(str(organization_id)),
         )
         if job:
             from sfir_backend.domain.entities.metadata_sync import SyncJob
             sync_job = SyncJob(
-                id=uuid.UUID(job.id),
-                organization_id=uuid.UUID(organization_id),
-                connection_id=uuid.UUID(connection_id),
+                id=uuid.UUID(str(job.id)),
+                organization_id=uuid.UUID(str(organization_id)),
+                connection_id=uuid.UUID(str(connection_id)),
                 sync_type=SyncType(sync_type),
             )
             await coordinator.execute_sync(sync_job)
@@ -134,4 +134,70 @@ def detect_stale_syncs(_self, organization_id: str) -> list[dict]:
         return result
     except Exception as exc:
         logger.error("stale_detection_failed", error=str(exc))
+        return []
+
+
+async def _list_active_connections() -> list:
+    from sfir_backend.config.container import Container
+    from sfir_backend.config.settings import get_settings
+
+    container = Container(get_settings())
+    await container.startup()
+    try:
+        conn_repo = container.get_repository("salesforce_connection")
+        return await conn_repo.list_active()
+    finally:
+        await container.shutdown()
+
+
+@celery_app.task(name="metadata.dispatch_scheduled_syncs")
+def dispatch_scheduled_syncs(kind: str) -> list[dict]:
+    """Beat entry: enqueue per-connection sync tasks for every active connection.
+
+    ``kind`` is "incremental" or "full"; the per-connection tasks receive the
+    organization_id/connection_id args they require.
+    """
+    try:
+        loop = asyncio.new_event_loop()
+        try:
+            connections = loop.run_until_complete(_list_active_connections())
+            enqueued: list[dict] = []
+            for conn in connections:
+                task = full_sync if kind == "full" else incremental_sync
+                task.apply_async(
+                    args=[str(conn.organization_id), str(conn.id)],
+                    queue="metadata",
+                )
+                enqueued.append({
+                    "organization_id": str(conn.organization_id),
+                    "connection_id": str(conn.id),
+                    "kind": kind,
+                })
+            return enqueued
+        finally:
+            loop.close()
+    except Exception as exc:
+        logger.error("scheduled_sync_dispatch_failed", kind=kind, error=str(exc))
+        return []
+
+
+@celery_app.task(name="metadata.dispatch_stale_detection")
+def dispatch_stale_detection() -> list[dict]:
+    """Beat entry: run stale-job detection per active connection's organization."""
+    try:
+        loop = asyncio.new_event_loop()
+        try:
+            connections = loop.run_until_complete(_list_active_connections())
+            dispatched: list[dict] = []
+            for conn in connections:
+                detect_stale_syncs.apply_async(
+                    args=[str(conn.organization_id)],
+                    queue="default",
+                )
+                dispatched.append({"organization_id": str(conn.organization_id)})
+            return dispatched
+        finally:
+            loop.close()
+    except Exception as exc:
+        logger.error("stale_detection_dispatch_failed", error=str(exc))
         return []

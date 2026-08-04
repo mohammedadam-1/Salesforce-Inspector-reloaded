@@ -15,8 +15,14 @@ from sfir_backend.application.dto.metadata_sync import (
     SyncStatisticsResponse,
 )
 from sfir_backend.application.use_cases.metadata_sync import SyncCoordinator
+from sfir_backend.workers.tasks.metadata_sync import (
+    full_sync as full_sync_task,
+    incremental_sync as incremental_sync_task,
+)
 
 router = APIRouter(prefix="/sync", tags=["Metadata Sync"])
+
+_FULL_SYNC_TYPES = {"full", "force", "manual"}
 
 
 @router.post("/start")
@@ -27,6 +33,15 @@ async def start_sync(
     coordinator: SyncCoordinator = Depends(get_sync_coordinator),
 ) -> SyncJobResponse:
     response = await coordinator.start_sync(request, org_id, user_id)
+    task = (
+        full_sync_task
+        if request.sync_type in _FULL_SYNC_TYPES
+        else incremental_sync_task
+    )
+    task.apply_async(
+        args=[str(org_id), str(request.connection_id)],
+        queue="metadata",
+    )
     return response
 
 

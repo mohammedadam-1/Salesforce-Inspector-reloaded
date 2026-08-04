@@ -523,6 +523,9 @@ class FakeSalesforceConnectionRepo(ISalesforceConnectionRepository):
         return [c for c in self._connections.values()
                 if c.organization_id == org_id and c.is_active]
 
+    async def list_active(self) -> list[SalesforceConnection]:
+        return [c for c in self._connections.values() if c.is_active]
+
     async def save(self, connection: SalesforceConnection) -> SalesforceConnection:
         self._connections[connection.id] = connection
         self._org_user[(connection.organization_id, connection.user_id)] = connection

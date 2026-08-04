@@ -17,6 +17,16 @@ from sfir_backend.shared.exceptions.application import RateLimitExceededError
 
 logger = structlog.get_logger(__name__)
 
+_SWAGGER_DOC_PATHS = {"/docs", "/redoc", "/openapi.json"}
+
+_SWAGGER_DOC_CSP = (
+    "default-src 'self'; "
+    "script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; "
+    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
+    "font-src 'self' https://fonts.gstatic.com; "
+    "img-src 'self' data: https://fastapi.tiangolo.com"
+)
+
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     def __init__(self, app: FastAPI, settings: Settings) -> None:
@@ -42,9 +52,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             response.headers["Pragma"] = "no-cache"
 
             if self._settings.security_csp_enabled:
-                response.headers["Content-Security-Policy"] = (
-                    self._settings.security_csp_directives
+                csp = (
+                    _SWAGGER_DOC_CSP
+                    if request.url.path in _SWAGGER_DOC_PATHS
+                    else self._settings.security_csp_directives
                 )
+                response.headers["Content-Security-Policy"] = csp
 
             response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
             response.headers["Cross-Origin-Opener-Policy"] = "same-origin"

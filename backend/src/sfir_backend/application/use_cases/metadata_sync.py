@@ -39,6 +39,9 @@ from sfir_backend.domain.value_objects.metadata import (
 from sfir_backend.domain.value_objects.salesforce import (
     SalesforceEnvironment,
 )
+from sfir_backend.infrastructure.salesforce.sync.downloader import (
+    MetadataDownloadError,
+)
 from sfir_backend.infrastructure.salesforce.client import (
     SalesforceAuthError,
     SalesforceClient,
@@ -310,12 +313,14 @@ class SyncCoordinator:
         self, job: SyncJob, tracker: SyncProgressTracker,
     ) -> None:
         all_components: list[dict] = []
+        any_type_succeeded = False
         for mtype in KNOWN_METADATA_TYPES:
             try:
                 components = await self._downloader.get_metadata_components(mtype)
                 all_components.extend(
                     {"type": mtype, **c} for c in components
                 )
+                any_type_succeeded = True
             except Exception as exc:
                 logger.warning(
                     "sync_metadata_type_failed",
@@ -330,6 +335,12 @@ class SyncCoordinator:
                     error=str(exc),
                 )
                 job.failed_items += 1
+
+        if not any_type_succeeded and not all_components:
+            raise MetadataDownloadError(
+                "All metadata type queries failed; aborting sync to avoid "
+                "false deletion of the existing manifest",
+            )
 
         await tracker.start(len(all_components))
         manifest = self._manifest_generator.generate_manifest(all_components)
