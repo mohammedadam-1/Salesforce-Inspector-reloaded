@@ -54,6 +54,17 @@ class TestOAuthSessionCreate:
         assert session.environment == SalesforceEnvironment.SANDBOX
         assert session.id is not None
 
+    def test_organization_id_defaults_to_none(self) -> None:
+        session = _session(organization_id=None)
+        assert session.organization_id is None
+
+    def test_organization_id_none_survives_validation(self) -> None:
+        session = _session(organization_id=None)
+        session.validate(
+            environment=SalesforceEnvironment.PRODUCTION,
+            now=session.created_at + timedelta(seconds=60),
+        )
+
 
 class TestOAuthSessionExpiry:
     def test_not_expired_inside_ttl(self) -> None:

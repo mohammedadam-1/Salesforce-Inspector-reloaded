@@ -18,7 +18,7 @@ router = APIRouter(prefix="/salesforce", tags=["Salesforce"])
 @router.post("/connect")
 async def initiate_connect(
     request: SalesforceConnectRequest,
-    org_id: str = Depends(get_current_org_id),
+    org_id: uuid.UUID | None = Depends(get_current_org_id),
     user_id: str = Depends(get_current_user_id),
     sf_service: SalesforceUseCase = Depends(get_salesforce_service),
 ) -> SalesforceConnectResponse:

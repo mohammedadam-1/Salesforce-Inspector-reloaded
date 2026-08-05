@@ -1,5 +1,5 @@
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from sfir_backend.domain.value_objects.salesforce import (
@@ -13,16 +13,18 @@ class OAuthSession:
     """Server-side OAuth authorization session (state-bound).
 
     The ``state`` parameter is the only credential the callback receives;
-    it is bound server-side to the SFIR user and org that initiated the
-    flow, along with the PKCE code verifier which must never leave the
-    server. ``consumed_at`` marks single-use redemption.
+    it is bound server-side to the SFIR user that initiated the flow, along
+    with the PKCE code verifier which must never leave the server.
+    ``organization_id`` stays ``None`` until the callback resolves the
+    workspace via ``salesforce_org_id`` provisioning. ``consumed_at`` marks
+    single-use redemption.
     """
 
     id: uuid.UUID
     state: str
     code_verifier: str
     user_id: uuid.UUID
-    organization_id: uuid.UUID
+    organization_id: uuid.UUID | None
     environment: SalesforceEnvironment
     created_at: datetime
     expires_at: datetime
@@ -34,7 +36,7 @@ class OAuthSession:
         state: str,
         code_verifier: str,
         user_id: uuid.UUID,
-        organization_id: uuid.UUID,
+        organization_id: uuid.UUID | None = None,
         environment: SalesforceEnvironment,
         ttl_seconds: int = 600,
     ) -> "OAuthSession":

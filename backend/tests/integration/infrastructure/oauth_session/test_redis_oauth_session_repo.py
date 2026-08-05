@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 import pytest
 import pytest_asyncio
@@ -148,6 +148,17 @@ class TestRedisOAuthSessionRepository:
         assert consumed.expires_at == session.expires_at
         assert consumed.consumed_at is None
         assert consumed.id == session.id
+
+    async def test_roundtrip_with_null_organization_id(
+        self, repo: RedisOAuthSessionRepository,
+    ) -> None:
+        session = _session(organization_id=None)
+        await repo.create(session)
+        consumed = await repo.get_and_consume(
+            session.state, SalesforceEnvironment.PRODUCTION,
+        )
+        assert consumed is not None
+        assert consumed.organization_id is None
 
     async def test_sandbox_environment_roundtrip(
         self, repo: RedisOAuthSessionRepository,

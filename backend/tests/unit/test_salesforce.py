@@ -707,6 +707,18 @@ class TestSalesforceUseCase:
         assert self.session_repo.count() == 0
 
     @pytest.mark.asyncio
+    async def test_initiate_connect_without_org_creates_null_org_session(self) -> None:
+        request = SalesforceConnectRequest(environment="production")
+        response = await self.use_case.initiate_connect(request, None, self.user_id)
+
+        assert response.authorization_url.startswith("https://login.salesforce.com")
+        assert self.session_repo.count() == 1
+        session = next(iter(self.session_repo._sessions.values()))
+        assert session.user_id == self.user_id
+        assert session.organization_id is None
+        assert f"state={session.state}" in response.authorization_url
+
+    @pytest.mark.asyncio
     async def test_initiate_connect_allows_reconnect_after_disconnect(self) -> None:
         existing = SalesforceConnection.create(
             organization_id=self.org_id,

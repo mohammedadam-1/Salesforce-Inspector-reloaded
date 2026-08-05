@@ -66,7 +66,7 @@ class SalesforceUseCase:
     async def initiate_connect(
         self,
         request: SalesforceConnectRequest,
-        organization_id: uuid.UUID,
+        organization_id: uuid.UUID | None,
         user_id: uuid.UUID,
     ) -> SalesforceConnectResponse:
         if self._oauth_session_repo is None:
@@ -74,13 +74,14 @@ class SalesforceUseCase:
 
         environment = self._oauth_service.validate_environment(request.environment)
 
-        existing = await self._connection_repo.get_by_org_and_user(
-            organization_id, user_id,
-        )
-        if existing and existing.is_active:
-            raise ConflictError(
-                "An active Salesforce connection already exists for this org",
+        if organization_id is not None:
+            existing = await self._connection_repo.get_by_org_and_user(
+                organization_id, user_id,
             )
+            if existing and existing.is_active:
+                raise ConflictError(
+                    "An active Salesforce connection already exists for this org",
+                )
 
         state = self._oauth_service.generate_state()
         pkce = self._oauth_service.generate_pkce_pair()

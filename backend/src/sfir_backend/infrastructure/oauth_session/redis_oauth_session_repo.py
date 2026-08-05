@@ -94,7 +94,7 @@ class RedisOAuthSessionRepository(IOAuthSessionRepository):
             "state": session.state,
             "code_verifier": session.code_verifier,
             "user_id": str(session.user_id),
-            "organization_id": str(session.organization_id),
+            "organization_id": (str(session.organization_id) if session.organization_id else None),
             "environment": session.environment.value,
             "created_at": session.created_at.isoformat(),
             "expires_at": session.expires_at.isoformat(),
@@ -109,7 +109,9 @@ class RedisOAuthSessionRepository(IOAuthSessionRepository):
             state=data["state"],
             code_verifier=data["code_verifier"],
             user_id=uuid.UUID(data["user_id"]),
-            organization_id=uuid.UUID(data["organization_id"]),
+            organization_id=(
+                uuid.UUID(data["organization_id"]) if data.get("organization_id") else None
+            ),
             environment=SalesforceEnvironment(data["environment"]),
             created_at=datetime.fromisoformat(data["created_at"]),
             expires_at=datetime.fromisoformat(data["expires_at"]),
