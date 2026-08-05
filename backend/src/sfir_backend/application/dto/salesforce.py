@@ -11,8 +11,6 @@ class SalesforceConnectRequest:
 @dataclass
 class SalesforceConnectResponse:
     authorization_url: str
-    state: str
-    code_verifier: str
     environment: str
 
 

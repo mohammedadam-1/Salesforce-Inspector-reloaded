@@ -40,6 +40,20 @@ class SalesforceConnectionRepository(ISalesforceConnectionRepository):
         model = result.scalar_one_or_none()
         return self._to_domain(model) if model else None
 
+    async def get_inactive_by_org_and_user(
+        self, org_id: uuid.UUID, user_id: uuid.UUID,
+    ) -> SalesforceConnection | None:
+        result = await self._session.execute(
+            select(SalesforceConnectionModel)
+            .where(SalesforceConnectionModel.organization_id == org_id)
+            .where(SalesforceConnectionModel.user_id == user_id)
+            .where(SalesforceConnectionModel.is_active.is_(False))
+            .order_by(SalesforceConnectionModel.created_at.desc())
+            .limit(1),
+        )
+        model = result.scalar_one_or_none()
+        return self._to_domain(model) if model else None
+
     async def list_by_organization(
         self, org_id: uuid.UUID,
     ) -> list[SalesforceConnection]:

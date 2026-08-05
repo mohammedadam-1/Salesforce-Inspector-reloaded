@@ -801,6 +801,9 @@ class FakeConnRepo(ISalesforceConnectionRepository):
     async def get_by_org_and_user(self, org_id, user_id):
         return self._conn
 
+    async def get_inactive_by_org_and_user(self, org_id, user_id):
+        return None
+
     async def list_by_organization(self, org_id): return [self._conn]
     async def list_by_user(self, user_id): return [self._conn]
     async def list_active_by_organization(self, org_id): return [self._conn]

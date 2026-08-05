@@ -16,6 +16,11 @@ class ISalesforceConnectionRepository(ABC):
     ) -> SalesforceConnection | None: ...
 
     @abstractmethod
+    async def get_inactive_by_org_and_user(
+        self, org_id: uuid.UUID, user_id: uuid.UUID,
+    ) -> SalesforceConnection | None: ...
+
+    @abstractmethod
     async def list_by_organization(self, org_id: uuid.UUID) -> list[SalesforceConnection]: ...
 
     @abstractmethod

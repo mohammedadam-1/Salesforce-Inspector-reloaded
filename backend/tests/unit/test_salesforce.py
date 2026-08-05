@@ -13,8 +13,12 @@ from sfir_backend.application.dto.salesforce import (
 )
 from sfir_backend.application.use_cases.salesforce import SalesforceUseCase
 from sfir_backend.config.settings import Settings
+from sfir_backend.domain.entities.oauth_session import OAuthSession
 from sfir_backend.domain.entities.salesforce_connection import SalesforceConnection
 from sfir_backend.domain.repositories.audit_log_repo import IAuditLogRepository
+from sfir_backend.domain.repositories.oauth_session_repo import (
+    IOAuthSessionRepository,
+)
 from sfir_backend.domain.repositories.organization_repo import IOrganizationRepository
 from sfir_backend.domain.repositories.salesforce_repos import (
     ISalesforceConnectionRepository,
@@ -34,7 +38,10 @@ from sfir_backend.infrastructure.salesforce.oauth import (
     SalesforceOAuthService,
 )
 from sfir_backend.infrastructure.security.encryption import EncryptionService
-from sfir_backend.shared.exceptions.application import ConflictError
+from sfir_backend.shared.exceptions.application import (
+    ConflictError,
+    InvalidOAuthStateError,
+)
 from sfir_backend.shared.exceptions.domain import EntityNotFoundError
 
 # ---------------------------------------------------------------------------
@@ -511,6 +518,12 @@ class FakeSalesforceConnectionRepo(ISalesforceConnectionRepository):
     ) -> SalesforceConnection | None:
         return self._org_user.get((org_id, user_id))
 
+    async def get_inactive_by_org_and_user(
+        self, org_id: uuid.UUID, user_id: uuid.UUID,
+    ) -> SalesforceConnection | None:
+        conn = self._org_user.get((org_id, user_id))
+        return conn if conn and not conn.is_active else None
+
     async def list_by_organization(self, org_id: uuid.UUID) -> list[SalesforceConnection]:
         return [c for c in self._connections.values() if c.organization_id == org_id]
 
@@ -568,6 +581,31 @@ class FakeAuditRepo(IAuditLogRepository):
     async def count_by_org(self, oid, since=None): return 0
 
 
+class FakeOAuthSessionRepo(IOAuthSessionRepository):
+    """In-memory fake mirroring the Redis repo contract: single-use consume,
+    environment mismatch raises, consumed sessions are gone."""
+
+    def __init__(self) -> None:
+        self._sessions: dict[str, OAuthSession] = {}
+
+    async def create(self, session: OAuthSession) -> None:
+        self._sessions[session.state] = session
+
+    async def get_and_consume(
+        self, state: str, environment: SalesforceEnvironment,
+    ) -> OAuthSession | None:
+        session = self._sessions.get(state)
+        if session is None:
+            return None
+        if session.environment != environment:
+            raise InvalidOAuthStateError("OAuth environment mismatch")
+        del self._sessions[state]
+        return session
+
+    def count(self) -> int:
+        return len(self._sessions)
+
+
 # ---------------------------------------------------------------------------
 # SalesforceUseCase
 # ---------------------------------------------------------------------------
@@ -584,6 +622,7 @@ class TestSalesforceUseCase:
         self.connection_repo = FakeSalesforceConnectionRepo()
         self.org_repo = FakeOrgRepo()
         self.audit_repo = FakeAuditRepo()
+        self.session_repo = FakeOAuthSessionRepo()
         self.oauth = SalesforceOAuthService(self.settings)
         self.encryption = EncryptionService(self.settings)
         self.use_case = SalesforceUseCase(
@@ -592,9 +631,43 @@ class TestSalesforceUseCase:
             audit_log_repo=self.audit_repo,
             oauth_service=self.oauth,
             encryption_service=self.encryption,
+            oauth_session_repo=self.session_repo,
         )
         self.org_id = uuid.uuid4()
         self.user_id = uuid.uuid4()
+
+    async def _seed_session(
+        self,
+        state: str = "state",
+        code_verifier: str = "session-verifier",
+        user_id: uuid.UUID | None = None,
+        organization_id: uuid.UUID | None = None,
+        environment: SalesforceEnvironment = SalesforceEnvironment.PRODUCTION,
+        ttl_seconds: int = 600,
+    ) -> OAuthSession:
+        session = OAuthSession.create(
+            state=state,
+            code_verifier=code_verifier,
+            user_id=user_id if user_id is not None else self.user_id,
+            organization_id=(
+                organization_id if organization_id is not None else self.org_id
+            ),
+            environment=environment,
+            ttl_seconds=ttl_seconds,
+        )
+        await self.session_repo.create(session)
+        return session
+
+    def _valid_token_response(self, **overrides) -> dict:
+        payload = {
+            "access_token": "00D-access-token",
+            "refresh_token": "5AEP-refresh-token",
+            "instance_url": "https://na1.salesforce.com",
+            "id": "https://login.salesforce.com/id/00Dorg123/005user456",
+            "username": "user@example.com",
+        }
+        payload.update(overrides)
+        return payload
 
     @pytest.mark.asyncio
     async def test_initiate_connect_success(self) -> None:
@@ -603,9 +676,17 @@ class TestSalesforceUseCase:
 
         assert response.authorization_url.startswith("https://login.salesforce.com")
         assert "response_type=code" in response.authorization_url
-        assert len(response.state) > 0
-        assert len(response.code_verifier) > 0
         assert response.environment == "production"
+        assert not hasattr(response, "state")
+        assert not hasattr(response, "code_verifier")
+
+        assert self.session_repo.count() == 1
+        session = next(iter(self.session_repo._sessions.values()))
+        assert session.user_id == self.user_id
+        assert session.organization_id == self.org_id
+        assert session.environment == SalesforceEnvironment.PRODUCTION
+        assert session.code_verifier not in response.authorization_url
+        assert f"state={session.state}" in response.authorization_url
 
     @pytest.mark.asyncio
     async def test_initiate_connect_conflict_when_active_exists(self) -> None:
@@ -623,6 +704,8 @@ class TestSalesforceUseCase:
         with pytest.raises(ConflictError, match="already exists"):
             await self.use_case.initiate_connect(request, self.org_id, self.user_id)
 
+        assert self.session_repo.count() == 0
+
     @pytest.mark.asyncio
     async def test_initiate_connect_allows_reconnect_after_disconnect(self) -> None:
         existing = SalesforceConnection.create(
@@ -639,28 +722,58 @@ class TestSalesforceUseCase:
         request = SalesforceConnectRequest(environment="sandbox")
         response = await self.use_case.initiate_connect(request, self.org_id, self.user_id)
         assert response.authorization_url.startswith("https://test.salesforce.com")
+        assert not hasattr(response, "state")
+        assert not hasattr(response, "code_verifier")
+        assert self.session_repo.count() == 1
+
+    @pytest.mark.asyncio
+    async def test_initiate_connect_fails_closed_without_session_repo(self) -> None:
+        use_case = SalesforceUseCase(
+            connection_repo=self.connection_repo,
+            org_repo=self.org_repo,
+            audit_log_repo=self.audit_repo,
+            oauth_service=self.oauth,
+            encryption_service=self.encryption,
+        )
+        request = SalesforceConnectRequest(environment="production")
+        with pytest.raises(InvalidOAuthStateError, match="not configured"):
+            await use_case.initiate_connect(request, self.org_id, self.user_id)
+
+    @pytest.mark.asyncio
+    async def test_handle_callback_fails_closed_without_session_repo(self) -> None:
+        use_case = SalesforceUseCase(
+            connection_repo=self.connection_repo,
+            org_repo=self.org_repo,
+            audit_log_repo=self.audit_repo,
+            oauth_service=self.oauth,
+            encryption_service=self.encryption,
+        )
+        request = SalesforceCallbackRequest(
+            code="c", state="s", code_verifier="v", environment="production",
+        )
+        with pytest.raises(InvalidOAuthStateError, match="not configured"):
+            await use_case.handle_callback(request, self.org_id, self.user_id)
 
     @pytest.mark.asyncio
     async def test_handle_callback_new_connection(self) -> None:
-        token_response = {
-            "access_token": "00D-access-token",
-            "refresh_token": "5AEP-refresh-token",
-            "instance_url": "https://na1.salesforce.com",
-            "id": "https://login.salesforce.com/id/00Dorg123/005user456",
-            "username": "user@example.com",
-        }
+        await self._seed_session(state="state", code_verifier="session-verifier")
 
-        with patch.object(self.oauth, "exchange_code_for_tokens", return_value=token_response):
+        with patch.object(self.oauth, "exchange_code_for_tokens",
+                          return_value=self._valid_token_response()) as mock_exchange:
             request = SalesforceCallbackRequest(
                 code="auth-code",
                 state="state",
-                code_verifier="verifier",
+                code_verifier="browser-verifier-should-be-ignored",
                 environment="production",
             )
             response = await self.use_case.handle_callback(
                 request, self.org_id, self.user_id, ip_address="127.0.0.1",
             )
-
+            mock_exchange.assert_awaited_once_with(
+                code="auth-code",
+                code_verifier="session-verifier",
+                environment=SalesforceEnvironment.PRODUCTION,
+            )
         assert response.org_id == "00Dorg123"
         assert response.username == "user@example.com"
         assert response.instance_url == "https://na1.salesforce.com"
@@ -669,6 +782,8 @@ class TestSalesforceUseCase:
         assert response.organization_id == self.org_id
         assert len(self.audit_repo.entries) == 1
         assert self.audit_repo.entries[0].action == "salesforce.connected"
+        assert self.audit_repo.entries[0].user_id == self.user_id
+        assert self.session_repo.count() == 0
 
     @pytest.mark.asyncio
     async def test_handle_callback_updates_existing_connection(self) -> None:
@@ -681,16 +796,16 @@ class TestSalesforceUseCase:
             username="old@example.com",
         )
         await self.connection_repo.save(existing)
+        await self._seed_session(state="s", code_verifier="session-verifier")
 
-        token_response = {
-            "access_token": "new-access-token",
-            "refresh_token": "new-refresh-token",
-            "instance_url": "https://new.salesforce.com",
-            "id": "https://login.salesforce.com/id/00Dnew/005newuser",
-            "username": "new@example.com",
-        }
-
-        with patch.object(self.oauth, "exchange_code_for_tokens", return_value=token_response):
+        with patch.object(self.oauth, "exchange_code_for_tokens",
+                          return_value=self._valid_token_response(
+                              access_token="new-access-token",
+                              refresh_token="new-refresh-token",
+                              instance_url="https://new.salesforce.com",
+                              id="https://login.salesforce.com/id/00Dnew/005newuser",
+                              username="new@example.com",
+                          )):
             request = SalesforceCallbackRequest(
                 code="new-code", state="s", code_verifier="v", environment="production",
             )
@@ -705,14 +820,12 @@ class TestSalesforceUseCase:
 
     @pytest.mark.asyncio
     async def test_handle_callback_missing_refresh_token(self) -> None:
-        token_response = {
-            "access_token": "00D-only-access",
-            "instance_url": "https://na1.salesforce.com",
-            "id": "https://login.salesforce.com/id/00Dorg/005user",
-            "username": "no-refresh@example.com",
-        }
+        await self._seed_session(state="s")
 
-        with patch.object(self.oauth, "exchange_code_for_tokens", return_value=token_response):
+        with patch.object(self.oauth, "exchange_code_for_tokens",
+                          return_value=self._valid_token_response(
+                              refresh_token=None,
+                          )):
             request = SalesforceCallbackRequest(
                 code="c", state="s", code_verifier="v", environment="production",
             )
@@ -724,12 +837,105 @@ class TestSalesforceUseCase:
 
     @pytest.mark.asyncio
     async def test_handle_callback_missing_access_token_raises(self) -> None:
+        await self._seed_session(state="s")
+
         with patch.object(self.oauth, "exchange_code_for_tokens", return_value={}):
             request = SalesforceCallbackRequest(
                 code="c", state="s", code_verifier="v", environment="production",
             )
             with pytest.raises(ValueError, match="Invalid token response"):
                 await self.use_case.handle_callback(request, self.org_id, self.user_id)
+
+        assert self.session_repo.count() == 0
+        saved = await self.connection_repo.get_by_org_and_user(self.org_id, self.user_id)
+        assert saved is None
+        assert self.audit_repo.entries == []
+
+    @pytest.mark.asyncio
+    async def test_handle_callback_invalid_state_rejected(self) -> None:
+        request = SalesforceCallbackRequest(
+            code="c", state="never-issued-state", code_verifier="v",
+            environment="production",
+        )
+        with pytest.raises(InvalidOAuthStateError, match="Invalid, expired"):
+            await self.use_case.handle_callback(request, self.org_id, self.user_id)
+
+    @pytest.mark.asyncio
+    async def test_handle_callback_environment_mismatch_rejected(self) -> None:
+        await self._seed_session(
+            state="s", environment=SalesforceEnvironment.SANDBOX,
+        )
+        request = SalesforceCallbackRequest(
+            code="c", state="s", code_verifier="v", environment="production",
+        )
+        with pytest.raises(InvalidOAuthStateError):
+            await self.use_case.handle_callback(request, self.org_id, self.user_id)
+        assert self.session_repo.count() == 1
+
+    @pytest.mark.asyncio
+    async def test_handle_callback_expired_session_rejected(self) -> None:
+        await self._seed_session(state="s", ttl_seconds=-1)
+        request = SalesforceCallbackRequest(
+            code="c", state="s", code_verifier="v", environment="production",
+        )
+        with pytest.raises(InvalidOAuthStateError):
+            await self.use_case.handle_callback(request, self.org_id, self.user_id)
+
+    @pytest.mark.asyncio
+    async def test_handle_callback_replay_rejected(self) -> None:
+        await self._seed_session(state="s")
+        request = SalesforceCallbackRequest(
+            code="c", state="s", code_verifier="v", environment="production",
+        )
+        with patch.object(self.oauth, "exchange_code_for_tokens",
+                          return_value=self._valid_token_response()):
+            await self.use_case.handle_callback(request, self.org_id, self.user_id)
+
+        with pytest.raises(InvalidOAuthStateError, match="already-used"):
+            await self.use_case.handle_callback(request, self.org_id, self.user_id)
+
+    @pytest.mark.asyncio
+    async def test_handle_callback_failed_exchange_consumes_session(self) -> None:
+        await self._seed_session(state="s")
+        request = SalesforceCallbackRequest(
+            code="c", state="s", code_verifier="v", environment="production",
+        )
+        with (
+            patch.object(self.oauth, "exchange_code_for_tokens",
+                          side_effect=SalesforceOAuthError("invalid_grant")),
+            pytest.raises(SalesforceOAuthError),
+        ):
+            await self.use_case.handle_callback(request, self.org_id, self.user_id)
+
+        assert self.session_repo.count() == 0
+        saved = await self.connection_repo.get_by_org_and_user(self.org_id, self.user_id)
+        assert saved is None
+        assert self.audit_repo.entries == []
+
+    @pytest.mark.asyncio
+    async def test_handle_callback_uses_session_identity(self) -> None:
+        session_org = uuid.uuid4()
+        session_user = uuid.uuid4()
+        await self._seed_session(
+            state="s",
+            user_id=session_user,
+            organization_id=session_org,
+        )
+
+        with patch.object(self.oauth, "exchange_code_for_tokens",
+                          return_value=self._valid_token_response()):
+            request = SalesforceCallbackRequest(
+                code="c", state="s", code_verifier="ignored", environment="production",
+            )
+            response = await self.use_case.handle_callback(
+                request, uuid.uuid4(), uuid.uuid4(),
+            )
+
+        assert response.organization_id == session_org
+        assert self.audit_repo.entries[0].user_id == session_user
+        assert self.audit_repo.entries[0].organization_id == session_org
+        saved = await self.connection_repo.get_by_org_and_user(session_org, session_user)
+        assert saved is not None
 
     @pytest.mark.asyncio
     async def test_disconnect_success(self) -> None:

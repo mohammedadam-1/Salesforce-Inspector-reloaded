@@ -17,13 +17,11 @@ class RedisConnectionPool:
         settings: Settings,
         max_connections: int = 50,
         timeout: float = 5.0,
-        retry_on_timeout: bool = True,
         health_check_interval: int = 30,
     ) -> None:
         self._settings = settings
         self._max_connections = max_connections
         self._timeout = timeout
-        self._retry_on_timeout = retry_on_timeout
         self._health_check_interval = health_check_interval
         self._pool: ConnectionPool | None = None
         self._client: Redis | None = None
@@ -38,8 +36,8 @@ class RedisConnectionPool:
         self._pool = ConnectionPool.from_url(
             redis_url,
             max_connections=self._max_connections,
-            timeout=self._timeout,
-            retry_on_timeout=self._retry_on_timeout,
+            socket_connect_timeout=self._timeout,
+            socket_timeout=self._timeout,
             health_check_interval=self._health_check_interval,
             socket_keepalive=True,
         )

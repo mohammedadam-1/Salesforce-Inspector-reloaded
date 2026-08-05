@@ -1,6 +1,6 @@
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sfir_backend.domain.value_objects.salesforce import (
     SalesforceConnectionStatus,
@@ -54,12 +54,14 @@ class SalesforceConnection:
         self,
         access_token_encrypted: str,
         refresh_token_encrypted: str,
+        expires_in: int = 3600,
     ) -> None:
         self.status = SalesforceConnectionStatus.CONNECTED
+        self.is_active = True
         self.access_token_encrypted = access_token_encrypted
         self.refresh_token_encrypted = refresh_token_encrypted
-        self.token_expires_at = datetime.now(UTC).replace(
-            second=0, microsecond=0,
+        self.token_expires_at = datetime.now(UTC) + timedelta(
+            seconds=max(expires_in, 60),
         )
         self.error_message = ""
         self.updated_at = datetime.now(UTC)
@@ -81,11 +83,12 @@ class SalesforceConnection:
         self,
         access_token_encrypted: str,
         refresh_token_encrypted: str | None = None,
+        expires_in: int = 3600,
     ) -> None:
         self.access_token_encrypted = access_token_encrypted
         if refresh_token_encrypted:
             self.refresh_token_encrypted = refresh_token_encrypted
-        self.token_expires_at = datetime.now(UTC).replace(
-            second=0, microsecond=0,
+        self.token_expires_at = datetime.now(UTC) + timedelta(
+            seconds=max(expires_in, 60),
         )
         self.updated_at = datetime.now(UTC)

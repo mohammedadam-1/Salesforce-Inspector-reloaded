@@ -294,6 +294,7 @@ class ConnectionManager:
         connection.update_tokens(
             access_token_encrypted=new_access_encrypted,
             refresh_token_encrypted=new_refresh_encrypted,
+            expires_in=int(token_data.get("expires_in") or 3600),
         )
 
         self._pool.remove(connection.organization_id, connection.id)

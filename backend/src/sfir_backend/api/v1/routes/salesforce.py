@@ -1,3 +1,5 @@
+import uuid
+
 from fastapi import APIRouter, Depends, Request
 
 from sfir_backend.api.deps import get_current_org_id, get_current_user_id, get_salesforce_service
@@ -27,10 +29,7 @@ async def initiate_connect(
 async def oauth_callback(
     code: str,
     state: str,
-    code_verifier: str,
     environment: str = "production",
-    org_id: str = Depends(get_current_org_id),
-    user_id: str = Depends(get_current_user_id),
     http_request: Request = None,
     sf_service: SalesforceUseCase = Depends(get_salesforce_service),
 ) -> SalesforceConnectionResponse:
@@ -38,11 +37,17 @@ async def oauth_callback(
     callback_request = SalesforceCallbackRequest(
         code=code,
         state=state,
-        code_verifier=code_verifier,
+        code_verifier="",
         environment=environment,
     )
+    # Identity (user/org) and PKCE verifier are resolved server-side from the
+    # single-use OAuthSession; the placeholder ids below are ignored by the
+    # use case (browser redirect carries no JWT).
     return await sf_service.handle_callback(
-        callback_request, org_id, user_id, ip_address,
+        callback_request,
+        organization_id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        ip_address=ip_address,
     )
 
 

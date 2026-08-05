@@ -13,10 +13,14 @@ from sfir_backend.application.dto.salesforce import (
 )
 from sfir_backend.application.use_cases.metadata_sync import SyncCoordinator
 from sfir_backend.domain.entities.audit_log import AuditLogEntry
+from sfir_backend.domain.entities.oauth_session import OAuthSession
 from sfir_backend.domain.entities.salesforce_connection import (
     SalesforceConnection,
 )
 from sfir_backend.domain.repositories.audit_log_repo import IAuditLogRepository
+from sfir_backend.domain.repositories.oauth_session_repo import (
+    IOAuthSessionRepository,
+)
 from sfir_backend.domain.repositories.organization_repo import (
     IOrganizationRepository,
 )
@@ -31,7 +35,10 @@ from sfir_backend.infrastructure.salesforce.oauth import (
     SalesforceOAuthService,
 )
 from sfir_backend.infrastructure.security.encryption import EncryptionService
-from sfir_backend.shared.exceptions.application import ConflictError
+from sfir_backend.shared.exceptions.application import (
+    ConflictError,
+    InvalidOAuthStateError,
+)
 from sfir_backend.shared.exceptions.domain import EntityNotFoundError
 
 logger = structlog.get_logger(__name__)
@@ -46,6 +53,7 @@ class SalesforceUseCase:
         oauth_service: SalesforceOAuthService,
         encryption_service: EncryptionService,
         sync_coordinator: SyncCoordinator | None = None,
+        oauth_session_repo: IOAuthSessionRepository | None = None,
     ) -> None:
         self._connection_repo = connection_repo
         self._org_repo = org_repo
@@ -53,6 +61,7 @@ class SalesforceUseCase:
         self._oauth_service = oauth_service
         self._encryption_service = encryption_service
         self._sync_coordinator = sync_coordinator
+        self._oauth_session_repo = oauth_session_repo
 
     async def initiate_connect(
         self,
@@ -60,6 +69,9 @@ class SalesforceUseCase:
         organization_id: uuid.UUID,
         user_id: uuid.UUID,
     ) -> SalesforceConnectResponse:
+        if self._oauth_session_repo is None:
+            raise InvalidOAuthStateError("OAuth session store not configured")
+
         environment = self._oauth_service.validate_environment(request.environment)
 
         existing = await self._connection_repo.get_by_org_and_user(
@@ -73,6 +85,15 @@ class SalesforceUseCase:
         state = self._oauth_service.generate_state()
         pkce = self._oauth_service.generate_pkce_pair()
 
+        session = OAuthSession.create(
+            state=state,
+            code_verifier=pkce["code_verifier"],
+            user_id=user_id,
+            organization_id=organization_id,
+            environment=environment,
+        )
+        await self._oauth_session_repo.create(session)
+
         auth_url = self._oauth_service.build_authorization_url(
             environment=environment,
             state=state,
@@ -81,8 +102,6 @@ class SalesforceUseCase:
 
         return SalesforceConnectResponse(
             authorization_url=auth_url,
-            state=state,
-            code_verifier=pkce["code_verifier"],
             environment=request.environment,
         )
 
@@ -93,11 +112,31 @@ class SalesforceUseCase:
         user_id: uuid.UUID,
         ip_address: str = "",
     ) -> SalesforceConnectionResponse:
+        if self._oauth_session_repo is None:
+            raise InvalidOAuthStateError("OAuth session store not configured")
+
         environment = self._oauth_service.validate_environment(request.environment)
+
+        # Consume the session (single-use) before any token exchange. A failed
+        # exchange never restores the session: the client must start over.
+        session = await self._oauth_session_repo.get_and_consume(
+            request.state, environment,
+        )
+        if session is None:
+            raise InvalidOAuthStateError(
+                "Invalid, expired, or already-used OAuth state.",
+            )
+        session.validate(environment)
+
+        # Identity and PKCE verifier come from the server-side session, never
+        # from browser-supplied values or the route's JWT context.
+        organization_id = session.organization_id
+        user_id = session.user_id
+        code_verifier = session.code_verifier
 
         token_response = await self._oauth_service.exchange_code_for_tokens(
             code=request.code,
-            code_verifier=request.code_verifier,
+            code_verifier=code_verifier,
             environment=environment,
         )
 
@@ -107,6 +146,7 @@ class SalesforceUseCase:
         id_parts = token_response.get("id", "").split("/")
         sf_org_id = id_parts[-2] if len(id_parts) >= 2 else ""
         username = token_response.get("username", "")
+        expires_in = int(token_response.get("expires_in") or 3600)
 
         if not access_token or not instance_url:
             raise ValueError("Invalid token response from Salesforce")
@@ -119,12 +159,17 @@ class SalesforceUseCase:
         existing = await self._connection_repo.get_by_org_and_user(
             organization_id, user_id,
         )
+        if not existing:
+            existing = await self._connection_repo.get_inactive_by_org_and_user(
+                organization_id, user_id,
+            )
 
         if existing:
             connection = existing
             connection.mark_connected(
                 access_token_encrypted=access_encrypted,
                 refresh_token_encrypted=refresh_encrypted,
+                expires_in=expires_in,
             )
             connection.instance_url = instance_url
             connection.org_id = sf_org_id
@@ -142,6 +187,7 @@ class SalesforceUseCase:
             connection.mark_connected(
                 access_token_encrypted=access_encrypted,
                 refresh_token_encrypted=refresh_encrypted,
+                expires_in=expires_in,
             )
             await self._connection_repo.save(connection)
 

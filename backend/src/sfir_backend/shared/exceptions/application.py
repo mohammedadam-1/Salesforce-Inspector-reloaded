@@ -66,3 +66,19 @@ class ConflictError(ApplicationException):
             detail=message,
             context=context,
         )
+
+
+class InvalidOAuthStateError(ApplicationException):
+    """Raised when an OAuth callback state is invalid, expired, or reused."""
+
+    def __init__(
+        self,
+        message: str = "Invalid, expired, or already-used OAuth state.",
+        context: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            status_code=400,
+            code="INVALID_OAUTH_STATE",
+            detail=message,
+            context=context,
+        )

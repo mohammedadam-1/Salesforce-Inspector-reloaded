@@ -149,6 +149,9 @@ from sfir_backend.infrastructure.observability.metrics import MetricsCollector
 from sfir_backend.infrastructure.observability.profiler import PerformanceProfiler
 from sfir_backend.infrastructure.observability.telemetry import TelemetryCoordinator
 from sfir_backend.infrastructure.observability.tracing import TracingManager
+from sfir_backend.infrastructure.oauth_session.redis_oauth_session_repo import (
+    RedisOAuthSessionRepository,
+)
 from sfir_backend.infrastructure.persistence.repositories.audit_log_repo import (
     AuditLogRepository,
 )
@@ -558,6 +561,11 @@ class Container:
             "metadata": SQLAlchemyMetadataRepository(session),
         }
 
+    def _make_oauth_session_repo(self) -> RedisOAuthSessionRepository | None:
+        if self._redis_client is None:
+            return None
+        return RedisOAuthSessionRepository(self._redis_client)
+
     def _make_auth_use_case(self) -> AuthUseCase:
         repos = self._make_repos()
         return AuthUseCase(
@@ -635,6 +643,7 @@ class Container:
             oauth_service=self._services["oauth"],
             encryption_service=self._services["encryption"],
             sync_coordinator=self._make_sync_coordinator(),
+            oauth_session_repo=self._make_oauth_session_repo(),
         )
 
     def create_salesforce_use_case(self, session: AsyncSession) -> SalesforceUseCase:
@@ -646,6 +655,7 @@ class Container:
             oauth_service=self._services["oauth"],
             encryption_service=self._services["encryption"],
             sync_coordinator=self.create_sync_coordinator(session),
+            oauth_session_repo=self._make_oauth_session_repo(),
         )
 
     def _make_sync_coordinator(self) -> SyncCoordinator:

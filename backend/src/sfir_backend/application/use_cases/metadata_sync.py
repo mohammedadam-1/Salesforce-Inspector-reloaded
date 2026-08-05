@@ -303,6 +303,7 @@ class SyncCoordinator:
                 connection.update_tokens(
                     access_token_encrypted=encrypted,
                     refresh_token_encrypted=encrypted_refresh,
+                    expires_in=int(token_data.get("expires_in") or 3600),
                 )
                 await self._connection_repo.update(connection)
                 logger.info("salesforce_token_refreshed")
