@@ -12,8 +12,11 @@ from sfir_backend.application.dto.salesforce import (
     SalesforceHealthResponse,
 )
 from sfir_backend.application.use_cases.metadata_sync import SyncCoordinator
+from sfir_backend.application.use_cases.organization import _OWNER_PERMISSIONS
 from sfir_backend.domain.entities.audit_log import AuditLogEntry
 from sfir_backend.domain.entities.oauth_session import OAuthSession
+from sfir_backend.domain.entities.org_member import OrgMember
+from sfir_backend.domain.entities.role import Role
 from sfir_backend.domain.entities.salesforce_connection import (
     SalesforceConnection,
 )
@@ -21,9 +24,11 @@ from sfir_backend.domain.repositories.audit_log_repo import IAuditLogRepository
 from sfir_backend.domain.repositories.oauth_session_repo import (
     IOAuthSessionRepository,
 )
+from sfir_backend.domain.repositories.org_member_repo import IOrgMemberRepository
 from sfir_backend.domain.repositories.organization_repo import (
     IOrganizationRepository,
 )
+from sfir_backend.domain.repositories.role_repo import IRoleRepository
 from sfir_backend.domain.repositories.salesforce_repos import (
     ISalesforceConnectionRepository,
 )
@@ -54,6 +59,8 @@ class SalesforceUseCase:
         encryption_service: EncryptionService,
         sync_coordinator: SyncCoordinator | None = None,
         oauth_session_repo: IOAuthSessionRepository | None = None,
+        org_member_repo: IOrgMemberRepository | None = None,
+        role_repo: IRoleRepository | None = None,
     ) -> None:
         self._connection_repo = connection_repo
         self._org_repo = org_repo
@@ -62,6 +69,8 @@ class SalesforceUseCase:
         self._encryption_service = encryption_service
         self._sync_coordinator = sync_coordinator
         self._oauth_session_repo = oauth_session_repo
+        self._org_member_repo = org_member_repo
+        self._role_repo = role_repo
 
     async def initiate_connect(
         self,
@@ -76,7 +85,8 @@ class SalesforceUseCase:
 
         if organization_id is not None:
             existing = await self._connection_repo.get_by_org_and_user(
-                organization_id, user_id,
+                organization_id,
+                user_id,
             )
             if existing and existing.is_active:
                 raise ConflictError(
@@ -121,7 +131,8 @@ class SalesforceUseCase:
         # Consume the session (single-use) before any token exchange. A failed
         # exchange never restores the session: the client must start over.
         session = await self._oauth_session_repo.get_and_consume(
-            request.state, environment,
+            request.state,
+            environment,
         )
         if session is None:
             raise InvalidOAuthStateError(
@@ -129,9 +140,8 @@ class SalesforceUseCase:
             )
         session.validate(environment)
 
-        # Identity and PKCE verifier come from the server-side session, never
-        # from browser-supplied values or the route's JWT context.
-        organization_id = session.organization_id
+        # Identity (user) and PKCE verifier come from the server-side session,
+        # never from browser-supplied values or the route's JWT context.
         user_id = session.user_id
         code_verifier = session.code_verifier
 
@@ -151,18 +161,49 @@ class SalesforceUseCase:
 
         if not access_token or not instance_url:
             raise ValueError("Invalid token response from Salesforce")
+        if not sf_org_id or len(sf_org_id) not in (15, 18) or not sf_org_id.isalnum():
+            raise ValueError(
+                "Invalid token response from Salesforce: missing org id",
+            )
 
         access_encrypted = self._encryption_service.encrypt(access_token)
-        refresh_encrypted = (
-            self._encryption_service.encrypt(refresh_token) if refresh_token else ""
+        refresh_encrypted = self._encryption_service.encrypt(refresh_token) if refresh_token else ""
+
+        # Workspace resolution: the Salesforce org id is the immutable tenant
+        # identifier. The backend Organization is resolved ONLY by this value
+        # — never by organization name, instance URL, username, or email.
+        org_name, org_type = await self._fetch_org_info(
+            instance_url=instance_url,
+            access_token=access_token,
+        )
+        org, workspace_created = await self._org_repo.find_or_create_by_salesforce_org_id(
+            salesforce_org_id=sf_org_id,
+            salesforce_org_name=org_name or f"Salesforce Org {sf_org_id}",
+            instance_url=instance_url,
+            organization_type=org_type or "Unknown",
+            owner_id=user_id,
+            slug=f"sf-{sf_org_id.lower()}",
+        )
+        organization_id = org.id
+        if workspace_created:
+            logger.info(
+                "workspace_provisioned",
+                organization_id=str(organization_id),
+                salesforce_org_id=sf_org_id,
+            )
+        await self._ensure_owner_membership(
+            organization_id=organization_id,
+            user_id=user_id,
         )
 
         existing = await self._connection_repo.get_by_org_and_user(
-            organization_id, user_id,
+            organization_id,
+            user_id,
         )
         if not existing:
             existing = await self._connection_repo.get_inactive_by_org_and_user(
-                organization_id, user_id,
+                organization_id,
+                user_id,
             )
 
         if existing:
@@ -192,15 +233,36 @@ class SalesforceUseCase:
             )
             await self._connection_repo.save(connection)
 
-        await self._audit_log_repo.save(AuditLogEntry.create(
-            action="salesforce.connected",
-            resource_type="salesforce_connection",
-            resource_id=str(connection.id),
-            user_id=user_id,
-            organization_id=organization_id,
-            details={"environment": request.environment, "org_id": sf_org_id},
-            ip_address=ip_address,
-        ))
+        if workspace_created:
+            await self._audit_log_repo.save(
+                AuditLogEntry.create(
+                    action="workspace.provisioned",
+                    resource_type="organization",
+                    resource_id=str(organization_id),
+                    user_id=user_id,
+                    organization_id=organization_id,
+                    details={
+                        "salesforce_org_id": sf_org_id,
+                        "salesforce_org_name": org.salesforce_org_name,
+                        "organization_type": org.organization_type,
+                        "instance_url": org.instance_url,
+                        "owner_membership": True,
+                    },
+                    ip_address=ip_address,
+                )
+            )
+
+        await self._audit_log_repo.save(
+            AuditLogEntry.create(
+                action="salesforce.connected",
+                resource_type="salesforce_connection",
+                resource_id=str(connection.id),
+                user_id=user_id,
+                organization_id=organization_id,
+                details={"environment": request.environment, "org_id": sf_org_id},
+                ip_address=ip_address,
+            )
+        )
 
         logger.info(
             "salesforce_connection_established",
@@ -212,10 +274,13 @@ class SalesforceUseCase:
         if self._sync_coordinator:
             try:
                 sync_req = StartSyncRequest(
-                    connection_id=connection.id, sync_type="full",
+                    connection_id=connection.id,
+                    sync_type="full",
                 )
                 await self._sync_coordinator.start_sync(
-                    sync_req, organization_id, user_id,
+                    sync_req,
+                    organization_id,
+                    user_id,
                 )
                 logger.info(
                     "initial_sync_started",
@@ -237,7 +302,8 @@ class SalesforceUseCase:
         ip_address: str = "",
     ) -> None:
         connection = await self._connection_repo.get_by_org_and_user(
-            organization_id, user_id,
+            organization_id,
+            user_id,
         )
         if not connection:
             raise EntityNotFoundError("SalesforceConnection", str(organization_id))
@@ -256,7 +322,8 @@ class SalesforceUseCase:
             try:
                 environment = SalesforceEnvironment(connection.environment.value)
                 await self._oauth_service.revoke_token(
-                    decrypted_refresh, environment=environment,
+                    decrypted_refresh,
+                    environment=environment,
                 )
             except Exception:
                 logger.warning(
@@ -264,14 +331,16 @@ class SalesforceUseCase:
                     connection_id=str(connection.id),
                 )
 
-        await self._audit_log_repo.save(AuditLogEntry.create(
-            action="salesforce.disconnected",
-            resource_type="salesforce_connection",
-            resource_id=str(connection.id),
-            user_id=user_id,
-            organization_id=organization_id,
-            ip_address=ip_address,
-        ))
+        await self._audit_log_repo.save(
+            AuditLogEntry.create(
+                action="salesforce.disconnected",
+                resource_type="salesforce_connection",
+                resource_id=str(connection.id),
+                user_id=user_id,
+                organization_id=organization_id,
+                ip_address=ip_address,
+            )
+        )
 
     async def get_status(
         self,
@@ -279,7 +348,8 @@ class SalesforceUseCase:
         user_id: uuid.UUID,
     ) -> SalesforceConnectionResponse | None:
         connection = await self._connection_repo.get_by_org_and_user(
-            organization_id, user_id,
+            organization_id,
+            user_id,
         )
         if not connection:
             return None
@@ -291,7 +361,8 @@ class SalesforceUseCase:
         user_id: uuid.UUID,
     ) -> SalesforceHealthResponse:
         connection = await self._connection_repo.get_by_org_and_user(
-            organization_id, user_id,
+            organization_id,
+            user_id,
         )
         if not connection:
             raise EntityNotFoundError("SalesforceConnection", str(organization_id))
@@ -341,8 +412,91 @@ class SalesforceUseCase:
                 error_message=str(exc),
             )
 
+    async def _fetch_org_info(
+        self,
+        *,
+        instance_url: str,
+        access_token: str,
+    ) -> tuple[str, str]:
+        """Best-effort org name/type from the Organization sobject.
+
+        The Salesforce org id (canonical tenant key) comes from the token
+        response itself; name/type are descriptive only, so any failure
+        degrades to empty strings (caller falls back to stable values)
+        instead of failing the callback.
+        """
+        client = SalesforceClient(
+            instance_url=instance_url,
+            api_version=self._oauth_service.get_default_api_version(),
+        )
+        try:
+            client.set_access_token(access_token)
+            records = await client.query(
+                "SELECT Id, Name, OrganizationType FROM Organization LIMIT 1",
+            )
+            if records:
+                record = records[0]
+                return (
+                    str(record.get("Name") or ""),
+                    str(record.get("OrganizationType") or ""),
+                )
+        except Exception as exc:
+            logger.warning(
+                "workspace_org_info_fetch_failed",
+                error=str(exc),
+            )
+        finally:
+            await client.close()
+        return "", ""
+
+    async def _ensure_owner_membership(
+        self,
+        *,
+        organization_id: uuid.UUID,
+        user_id: uuid.UUID,
+    ) -> None:
+        """Idempotently grant the authenticated user OWNER membership.
+
+        The workspace owner is the SFIR user who completed the OAuth flow;
+        a pre-existing membership (e.g. reconnect after disconnect) is left
+        untouched.
+        """
+        if self._org_member_repo is None:
+            raise InvalidOAuthStateError("Org membership store not configured")
+        if self._role_repo is None:
+            raise InvalidOAuthStateError("Role store not configured")
+
+        existing = await self._org_member_repo.get_by_user_and_org(
+            user_id,
+            organization_id,
+        )
+        if existing:
+            return
+
+        owner_role = await self._role_repo.get_by_slug("owner")
+        if not owner_role:
+            owner_role = Role.create_system(
+                "Owner",
+                "owner",
+                "Full system access",
+            )
+            await self._role_repo.save(owner_role)
+            await self._role_repo.set_permissions_for_role(
+                owner_role.id,
+                list(_OWNER_PERMISSIONS),
+            )
+
+        member = OrgMember.create(
+            organization_id=organization_id,
+            user_id=user_id,
+            role_id=owner_role.id,
+            is_default=True,
+        )
+        await self._org_member_repo.save(member)
+
     def _to_response(
-        self, connection: SalesforceConnection,
+        self,
+        connection: SalesforceConnection,
     ) -> SalesforceConnectionResponse:
         return SalesforceConnectionResponse(
             id=connection.id,

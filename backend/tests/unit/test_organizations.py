@@ -19,6 +19,7 @@ class FakeRepo(dict):
 
 
 async def _make_org_use_case() -> OrganizationUseCase:
+    from sfir_backend.domain.entities.organization import Organization
     from sfir_backend.domain.repositories.audit_log_repo import IAuditLogRepository
     from sfir_backend.domain.repositories.org_member_repo import IOrgMemberRepository
     from sfir_backend.domain.repositories.organization_repo import (
@@ -50,6 +51,23 @@ async def _make_org_use_case() -> OrganizationUseCase:
                 if o.salesforce_org_id == salesforce_org_id:
                     return o
             return None
+        async def find_or_create_by_salesforce_org_id(
+            self, *, salesforce_org_id, salesforce_org_name,
+            instance_url, organization_type, owner_id, slug,
+        ):
+            existing = await self.get_by_salesforce_org_id(salesforce_org_id)
+            if existing:
+                return existing, False
+            org = Organization.create_workspace(
+                salesforce_org_id=salesforce_org_id,
+                salesforce_org_name=salesforce_org_name,
+                instance_url=instance_url,
+                organization_type=organization_type,
+                owner_id=owner_id,
+                slug=slug,
+            )
+            saved_orgs[org.id] = org
+            return org, True
         async def list_by_user(self, uid):
             return [o for o in saved_orgs.values() if o.owner_id == uid]
         async def save(self, o):

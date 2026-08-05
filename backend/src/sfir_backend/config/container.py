@@ -644,6 +644,8 @@ class Container:
             encryption_service=self._services["encryption"],
             sync_coordinator=self._make_sync_coordinator(),
             oauth_session_repo=self._make_oauth_session_repo(),
+            org_member_repo=repos["org_member"],
+            role_repo=repos["role"],
         )
 
     def create_salesforce_use_case(self, session: AsyncSession) -> SalesforceUseCase:
@@ -656,6 +658,8 @@ class Container:
             encryption_service=self._services["encryption"],
             sync_coordinator=self.create_sync_coordinator(session),
             oauth_session_repo=self._make_oauth_session_repo(),
+            org_member_repo=repos["org_member"],
+            role_repo=repos["role"],
         )
 
     def _make_sync_coordinator(self) -> SyncCoordinator:

@@ -53,6 +53,7 @@ TEST_REDIS_URL = os.getenv("SFIR_TEST_REDIS_URL", "redis://localhost:6379/15")
 
 ORG_ID = uuid.uuid4()
 USER_ID = uuid.uuid4()
+SF_ORG_ID = "00D000000000AAA"
 
 
 @pytest_asyncio.fixture
@@ -92,6 +93,7 @@ async def stack() -> AsyncIterator[dict[str, Any]]:
             name="E2E Org",
             slug="e2e-org",
             owner_id=USER_ID,
+            salesforce_org_id=SF_ORG_ID,
         ))
         await session.commit()
     finally:
@@ -103,7 +105,7 @@ async def stack() -> AsyncIterator[dict[str, Any]]:
         "access_token": "e2e-access-token",
         "refresh_token": "e2e-refresh-token",
         "instance_url": "https://na1.salesforce.com",
-        "id": "https://login.salesforce.com/id/00D-e2e/005-e2e",
+        "id": f"https://login.salesforce.com/id/{SF_ORG_ID}/005000000000BBB",
         "username": "e2e@example.com",
     }
     container.get_service("oauth").exchange_code_for_tokens = AsyncMock(
@@ -227,3 +229,95 @@ class TestSalesforceOAuthFlow:
             )
 
         assert response.status_code == 400, response.text
+
+    async def test_callback_provisions_workspace_when_org_unknown(
+        self, stack: dict[str, Any],
+    ) -> None:
+        app, container, redis = stack["app"], stack["container"], stack["redis"]
+        new_sf_org_id = "00D000000000CCC"
+        session_repo = RedisOAuthSessionRepository(redis)
+        await session_repo.create(OAuthSession.create(
+            state="e2e-state-provision",
+            code_verifier="e2e-verifier-from-session",
+            user_id=USER_ID,
+            organization_id=None,
+            environment=SalesforceEnvironment.PRODUCTION,
+        ))
+        container.get_service("oauth").exchange_code_for_tokens = AsyncMock(
+            return_value={
+                "access_token": "e2e-access-token",
+                "refresh_token": "e2e-refresh-token",
+                "instance_url": "https://na1.salesforce.com",
+                "id": f"https://login.salesforce.com/id/{new_sf_org_id}/005000000000BBB",
+                "username": "e2e@example.com",
+            },
+        )
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.get(
+                "/api/v1/salesforce/callback",
+                params={
+                    "code": "e2e-code",
+                    "state": "e2e-state-provision",
+                    "environment": "production",
+                },
+            )
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["organization_id"] != str(ORG_ID)
+        assert body["status"] == "connected"
+        assert body["org_id"] == new_sf_org_id
+
+        from sqlalchemy import select
+
+        from sfir_backend.infrastructure.persistence.models.org_member import (
+            OrgMemberModel,
+        )
+        from sfir_backend.infrastructure.persistence.models.role import RoleModel
+        from sfir_backend.infrastructure.persistence.models.salesforce_connection import (
+            SalesforceConnectionModel,
+        )
+
+        session = container.create_session()
+        try:
+            org_result = await session.execute(
+                select(OrganizationModel).where(
+                    OrganizationModel.salesforce_org_id == new_sf_org_id,
+                ),
+            )
+            workspace = org_result.scalar_one_or_none()
+            assert workspace is not None
+            assert workspace.status == "provisioning"
+            assert workspace.owner_id == USER_ID
+
+            member_result = await session.execute(
+                select(OrgMemberModel).where(
+                    OrgMemberModel.organization_id == workspace.id,
+                ),
+            )
+            member = member_result.scalar_one_or_none()
+            assert member is not None
+            assert member.user_id == USER_ID
+            assert member.is_default is True
+            role_result = await session.execute(
+                select(RoleModel).where(RoleModel.id == member.role_id),
+            )
+            role = role_result.scalar_one_or_none()
+            assert role is not None
+            assert role.slug == "owner"
+
+            conn_result = await session.execute(
+                select(SalesforceConnectionModel).where(
+                    SalesforceConnectionModel.organization_id == workspace.id,
+                ),
+            )
+            connection = conn_result.scalar_one_or_none()
+            assert connection is not None
+            assert connection.org_id == new_sf_org_id
+            assert connection.user_id == USER_ID
+        finally:
+            await session.close()

@@ -14,18 +14,27 @@ from sfir_backend.application.dto.salesforce import (
 from sfir_backend.application.use_cases.salesforce import SalesforceUseCase
 from sfir_backend.config.settings import Settings
 from sfir_backend.domain.entities.oauth_session import OAuthSession
+from sfir_backend.domain.entities.org_member import OrgMember
+from sfir_backend.domain.entities.organization import Organization
+from sfir_backend.domain.entities.role import Role
 from sfir_backend.domain.entities.salesforce_connection import SalesforceConnection
 from sfir_backend.domain.repositories.audit_log_repo import IAuditLogRepository
 from sfir_backend.domain.repositories.oauth_session_repo import (
     IOAuthSessionRepository,
 )
+from sfir_backend.domain.repositories.org_member_repo import IOrgMemberRepository
 from sfir_backend.domain.repositories.organization_repo import IOrganizationRepository
+from sfir_backend.domain.repositories.role_repo import IRoleRepository
 from sfir_backend.domain.repositories.salesforce_repos import (
     ISalesforceConnectionRepository,
 )
 from sfir_backend.domain.value_objects.salesforce import (
     SalesforceConnectionStatus,
     SalesforceEnvironment,
+)
+from sfir_backend.domain.value_objects.user_status import (
+    OrganizationStatus,
+    OrgMemberStatus,
 )
 from sfir_backend.infrastructure.salesforce.client import (
     CircuitBreaker,
@@ -558,14 +567,114 @@ class FakeSalesforceConnectionRepo(ISalesforceConnectionRepository):
 
 
 class FakeOrgRepo(IOrganizationRepository):
-    async def get_by_id(self, org_id): return None
-    async def get_by_slug(self, slug): return None
-    async def get_by_salesforce_org_id(self, salesforce_org_id): return None
-    async def list_by_user(self, user_id): return []
-    async def save(self, org): return org
-    async def update(self, org): return org
-    async def delete(self, org_id): return None
-    async def slug_exists(self, slug): return False
+    def __init__(self) -> None:
+        self._orgs: dict[uuid.UUID, Organization] = {}
+
+    async def get_by_id(self, org_id):
+        return self._orgs.get(org_id)
+
+    async def get_by_slug(self, slug):
+        return next((o for o in self._orgs.values() if o.slug == slug), None)
+
+    async def get_by_salesforce_org_id(self, salesforce_org_id):
+        return next(
+            (o for o in self._orgs.values()
+             if o.salesforce_org_id == salesforce_org_id),
+            None,
+        )
+
+    async def find_or_create_by_salesforce_org_id(
+        self, *, salesforce_org_id, salesforce_org_name,
+        instance_url, organization_type, owner_id, slug,
+    ):
+        existing = await self.get_by_salesforce_org_id(salesforce_org_id)
+        if existing:
+            return existing, False
+        org = Organization.create_workspace(
+            salesforce_org_id=salesforce_org_id,
+            salesforce_org_name=salesforce_org_name,
+            instance_url=instance_url,
+            organization_type=organization_type,
+            owner_id=owner_id,
+            slug=slug,
+        )
+        self._orgs[org.id] = org
+        return org, True
+
+    async def list_by_user(self, user_id):
+        return [o for o in self._orgs.values() if o.owner_id == user_id]
+
+    async def save(self, org):
+        self._orgs[org.id] = org
+        return org
+
+    async def update(self, org):
+        self._orgs[org.id] = org
+        return org
+
+    async def delete(self, org_id):
+        self._orgs.pop(org_id, None)
+
+    async def slug_exists(self, slug):
+        return any(o.slug == slug for o in self._orgs.values())
+
+
+class FakeMemberRepo(IOrgMemberRepository):
+    def __init__(self) -> None:
+        self._members: list[OrgMember] = []
+
+    async def get_by_id(self, member_id):
+        return next((m for m in self._members if m.id == member_id), None)
+
+    async def get_by_user_and_org(self, user_id, org_id):
+        return next(
+            (m for m in self._members
+             if m.user_id == user_id and m.organization_id == org_id),
+            None,
+        )
+
+    async def list_by_user(self, user_id):
+        return [m for m in self._members if m.user_id == user_id]
+
+    async def list_by_org(self, org_id):
+        return [m for m in self._members if m.organization_id == org_id]
+
+    async def save(self, member):
+        self._members.append(member)
+        return member
+
+    async def update(self, member):
+        return member
+
+    async def set_default(self, user_id, org_id):
+        return None
+
+
+class FakeRoleRepo(IRoleRepository):
+    def __init__(self) -> None:
+        self._roles: dict[uuid.UUID, Role] = {}
+
+    async def get_by_id(self, role_id):
+        return self._roles.get(role_id)
+
+    async def get_by_slug(self, slug):
+        return next((r for r in self._roles.values() if r.slug == slug), None)
+
+    async def list_system_roles(self):
+        return [r for r in self._roles.values() if r.is_system]
+
+    async def list_by_org(self, org_id):
+        return []
+
+    async def save(self, role):
+        self._roles[role.id] = role
+        return role
+
+    async def get_permissions_for_role(self, role_id):
+        return set()
+
+    async def set_permissions_for_role(self, role_id, permissions):
+        return None
 
 
 class FakeAuditRepo(IAuditLogRepository):
@@ -623,6 +732,8 @@ class TestSalesforceUseCase:
         self.org_repo = FakeOrgRepo()
         self.audit_repo = FakeAuditRepo()
         self.session_repo = FakeOAuthSessionRepo()
+        self.member_repo = FakeMemberRepo()
+        self.role_repo = FakeRoleRepo()
         self.oauth = SalesforceOAuthService(self.settings)
         self.encryption = EncryptionService(self.settings)
         self.use_case = SalesforceUseCase(
@@ -632,6 +743,8 @@ class TestSalesforceUseCase:
             oauth_service=self.oauth,
             encryption_service=self.encryption,
             oauth_session_repo=self.session_repo,
+            org_member_repo=self.member_repo,
+            role_repo=self.role_repo,
         )
         self.org_id = uuid.uuid4()
         self.user_id = uuid.uuid4()
@@ -663,11 +776,25 @@ class TestSalesforceUseCase:
             "access_token": "00D-access-token",
             "refresh_token": "5AEP-refresh-token",
             "instance_url": "https://na1.salesforce.com",
-            "id": "https://login.salesforce.com/id/00Dorg123/005user456",
+            "id": "https://login.salesforce.com/id/00D000000000AAA/005000000000BBB",
             "username": "user@example.com",
         }
         payload.update(overrides)
         return payload
+
+    def _patch_org_info(
+        self, records: list[dict] | None = None, query_error: Exception | None = None,
+    ):
+        mock_instance = MagicMock(spec=SalesforceClient)
+        if query_error:
+            mock_instance.query = AsyncMock(side_effect=query_error)
+        else:
+            mock_instance.query = AsyncMock(return_value=records or [])
+        mock_instance.close = AsyncMock()
+        return patch(
+            "sfir_backend.application.use_cases.salesforce.SalesforceClient",
+            return_value=mock_instance,
+        )
 
     @pytest.mark.asyncio
     async def test_initiate_connect_success(self) -> None:
@@ -770,8 +897,13 @@ class TestSalesforceUseCase:
     async def test_handle_callback_new_connection(self) -> None:
         await self._seed_session(state="state", code_verifier="session-verifier")
 
-        with patch.object(self.oauth, "exchange_code_for_tokens",
-                          return_value=self._valid_token_response()) as mock_exchange:
+        with (
+            patch.object(self.oauth, "exchange_code_for_tokens",
+                          return_value=self._valid_token_response()) as mock_exchange,
+            self._patch_org_info(
+                records=[{"Name": "Acme", "OrganizationType": "Enterprise"}],
+            ),
+        ):
             request = SalesforceCallbackRequest(
                 code="auth-code",
                 state="state",
@@ -786,38 +918,75 @@ class TestSalesforceUseCase:
                 code_verifier="session-verifier",
                 environment=SalesforceEnvironment.PRODUCTION,
             )
-        assert response.org_id == "00Dorg123"
+        assert response.org_id == "00D000000000AAA"
         assert response.username == "user@example.com"
         assert response.instance_url == "https://na1.salesforce.com"
         assert response.status == "connected"
         assert response.is_active is True
-        assert response.organization_id == self.org_id
-        assert len(self.audit_repo.entries) == 1
-        assert self.audit_repo.entries[0].action == "salesforce.connected"
+        assert response.organization_id != self.org_id
+
+        workspace = await self.org_repo.get_by_salesforce_org_id("00D000000000AAA")
+        assert workspace is not None
+        assert workspace.status == OrganizationStatus.PROVISIONING
+        assert workspace.salesforce_org_name == "Acme"
+        assert workspace.organization_type == "Enterprise"
+        assert workspace.instance_url == "https://na1.salesforce.com"
+        assert workspace.owner_id == self.user_id
+        assert workspace.slug == "sf-00d000000000aaa"
+
+        member = await self.member_repo.get_by_user_and_org(
+            self.user_id, workspace.id,
+        )
+        assert member is not None
+        assert member.status == OrgMemberStatus.ACTIVE
+        assert member.is_default is True
+        owner_role = await self.role_repo.get_by_slug("owner")
+        assert owner_role is not None
+        assert member.role_id == owner_role.id
+
+        saved = await self.connection_repo.get_by_org_and_user(
+            workspace.id, self.user_id,
+        )
+        assert saved is not None
+        assert saved.org_id == "00D000000000AAA"
+        assert len(self.audit_repo.entries) == 2
+        actions = {e.action for e in self.audit_repo.entries}
+        assert actions == {"workspace.provisioned", "salesforce.connected"}
         assert self.audit_repo.entries[0].user_id == self.user_id
         assert self.session_repo.count() == 0
 
     @pytest.mark.asyncio
     async def test_handle_callback_updates_existing_connection(self) -> None:
+        workspace, _ = await self.org_repo.find_or_create_by_salesforce_org_id(
+            salesforce_org_id="00D000000000NNN",
+            salesforce_org_name="Old Corp",
+            instance_url="https://old.salesforce.com",
+            organization_type="Enterprise",
+            owner_id=self.user_id,
+            slug="sf-00d000000000nnn",
+        )
         existing = SalesforceConnection.create(
-            organization_id=self.org_id,
+            organization_id=workspace.id,
             user_id=self.user_id,
             environment=SalesforceEnvironment.PRODUCTION,
             instance_url="https://old.salesforce.com",
-            org_id="00Dold",
+            org_id="00D000000000NNN",
             username="old@example.com",
         )
         await self.connection_repo.save(existing)
         await self._seed_session(state="s", code_verifier="session-verifier")
 
-        with patch.object(self.oauth, "exchange_code_for_tokens",
+        with (
+            patch.object(self.oauth, "exchange_code_for_tokens",
                           return_value=self._valid_token_response(
                               access_token="new-access-token",
                               refresh_token="new-refresh-token",
                               instance_url="https://new.salesforce.com",
-                              id="https://login.salesforce.com/id/00Dnew/005newuser",
+                              id="https://login.salesforce.com/id/00D000000000NNN/005000000000NNN",
                               username="new@example.com",
-                          )):
+                          )),
+            self._patch_org_info(),
+        ):
             request = SalesforceCallbackRequest(
                 code="new-code", state="s", code_verifier="v", environment="production",
             )
@@ -825,19 +994,35 @@ class TestSalesforceUseCase:
                 request, self.org_id, self.user_id,
             )
 
-        assert response.org_id == "00Dnew"
+        assert response.org_id == "00D000000000NNN"
         assert response.username == "new@example.com"
         assert response.instance_url == "https://new.salesforce.com"
         assert response.id == existing.id
+        assert response.organization_id == workspace.id
+
+        _, created = await self.org_repo.find_or_create_by_salesforce_org_id(
+            salesforce_org_id="00D000000000NNN",
+            salesforce_org_name="x",
+            instance_url="x",
+            organization_type="x",
+            owner_id=self.user_id,
+            slug="x",
+        )
+        assert created is False
+        assert len(self.audit_repo.entries) == 1
+        assert self.audit_repo.entries[0].action == "salesforce.connected"
 
     @pytest.mark.asyncio
     async def test_handle_callback_missing_refresh_token(self) -> None:
         await self._seed_session(state="s")
 
-        with patch.object(self.oauth, "exchange_code_for_tokens",
+        with (
+            patch.object(self.oauth, "exchange_code_for_tokens",
                           return_value=self._valid_token_response(
                               refresh_token=None,
-                          )):
+                          )),
+            self._patch_org_info(),
+        ):
             request = SalesforceCallbackRequest(
                 code="c", state="s", code_verifier="v", environment="production",
             )
@@ -846,6 +1031,7 @@ class TestSalesforceUseCase:
             )
 
         assert response.status == "connected"
+        assert response.org_id == "00D000000000AAA"
 
     @pytest.mark.asyncio
     async def test_handle_callback_missing_access_token_raises(self) -> None:
@@ -925,17 +1111,22 @@ class TestSalesforceUseCase:
         assert self.audit_repo.entries == []
 
     @pytest.mark.asyncio
-    async def test_handle_callback_uses_session_identity(self) -> None:
-        session_org = uuid.uuid4()
+    async def test_handle_callback_resolves_workspace_by_salesforce_org_id_only(
+        self,
+    ) -> None:
+        stale_session_org = uuid.uuid4()
         session_user = uuid.uuid4()
         await self._seed_session(
             state="s",
             user_id=session_user,
-            organization_id=session_org,
+            organization_id=stale_session_org,
         )
 
-        with patch.object(self.oauth, "exchange_code_for_tokens",
-                          return_value=self._valid_token_response()):
+        with (
+            patch.object(self.oauth, "exchange_code_for_tokens",
+                          return_value=self._valid_token_response()),
+            self._patch_org_info(),
+        ):
             request = SalesforceCallbackRequest(
                 code="c", state="s", code_verifier="ignored", environment="production",
             )
@@ -943,11 +1134,163 @@ class TestSalesforceUseCase:
                 request, uuid.uuid4(), uuid.uuid4(),
             )
 
-        assert response.organization_id == session_org
+        workspace = await self.org_repo.get_by_salesforce_org_id("00D000000000AAA")
+        assert workspace is not None
+        assert workspace.id != stale_session_org
+        assert response.organization_id == workspace.id
         assert self.audit_repo.entries[0].user_id == session_user
-        assert self.audit_repo.entries[0].organization_id == session_org
-        saved = await self.connection_repo.get_by_org_and_user(session_org, session_user)
+        saved = await self.connection_repo.get_by_org_and_user(
+            workspace.id, session_user,
+        )
         assert saved is not None
+
+    @pytest.mark.asyncio
+    async def test_handle_callback_reuses_existing_workspace(self) -> None:
+        workspace, created = await self.org_repo.find_or_create_by_salesforce_org_id(
+            salesforce_org_id="00D000000000AAA",
+            salesforce_org_name="Pre-existing Org",
+            instance_url="https://na1.salesforce.com",
+            organization_type="Enterprise",
+            owner_id=self.user_id,
+            slug="sf-00d000000000aaa",
+        )
+        assert created is True
+        await self._seed_session(state="s", organization_id=None)
+
+        with (
+            patch.object(self.oauth, "exchange_code_for_tokens",
+                          return_value=self._valid_token_response()),
+            self._patch_org_info(),
+        ):
+            request = SalesforceCallbackRequest(
+                code="c", state="s", code_verifier="v", environment="production",
+            )
+            response = await self.use_case.handle_callback(
+                request, self.org_id, self.user_id,
+            )
+
+        assert response.organization_id == workspace.id
+        assert len(self.audit_repo.entries) == 1
+        assert self.audit_repo.entries[0].action == "salesforce.connected"
+        members = await self.member_repo.list_by_org(workspace.id)
+        assert len(members) == 1
+
+    @pytest.mark.asyncio
+    async def test_handle_callback_org_info_failure_falls_back(self) -> None:
+        await self._seed_session(state="s")
+
+        with (
+            patch.object(self.oauth, "exchange_code_for_tokens",
+                          return_value=self._valid_token_response()),
+            self._patch_org_info(query_error=SalesforceAuthError("unauthorized")),
+        ):
+            request = SalesforceCallbackRequest(
+                code="c", state="s", code_verifier="v", environment="production",
+            )
+            response = await self.use_case.handle_callback(
+                request, self.org_id, self.user_id,
+            )
+
+        assert response.status == "connected"
+        workspace = await self.org_repo.get_by_salesforce_org_id("00D000000000AAA")
+        assert workspace is not None
+        assert workspace.salesforce_org_name == "Salesforce Org 00D000000000AAA"
+        assert workspace.organization_type == "Unknown"
+
+    @pytest.mark.asyncio
+    async def test_handle_callback_missing_org_id_raises(self) -> None:
+        await self._seed_session(state="s")
+
+        with patch.object(
+            self.oauth, "exchange_code_for_tokens",
+            return_value=self._valid_token_response(
+                id="https://login.salesforce.com/id/",
+            ),
+        ):
+            request = SalesforceCallbackRequest(
+                code="c", state="s", code_verifier="v", environment="production",
+            )
+            with pytest.raises(ValueError, match="missing org id"):
+                await self.use_case.handle_callback(request, self.org_id, self.user_id)
+
+    @pytest.mark.asyncio
+    async def test_handle_callback_queues_initial_sync(self) -> None:
+        sync_coordinator = MagicMock()
+        sync_coordinator.start_sync = AsyncMock(return_value=MagicMock(id=uuid.uuid4()))
+        self.use_case._sync_coordinator = sync_coordinator
+        await self._seed_session(state="s")
+
+        with (
+            patch.object(self.oauth, "exchange_code_for_tokens",
+                          return_value=self._valid_token_response()),
+            self._patch_org_info(),
+        ):
+            request = SalesforceCallbackRequest(
+                code="c", state="s", code_verifier="v", environment="production",
+            )
+            await self.use_case.handle_callback(request, self.org_id, self.user_id)
+
+        workspace = await self.org_repo.get_by_salesforce_org_id("00D000000000AAA")
+        connection = await self.connection_repo.get_by_org_and_user(
+            workspace.id, self.user_id,
+        )
+        sync_coordinator.start_sync.assert_awaited_once()
+        call = sync_coordinator.start_sync.await_args
+        assert call.args[0].connection_id == connection.id
+        assert call.args[0].sync_type == "full"
+
+    @pytest.mark.asyncio
+    async def test_handle_callback_second_user_reuses_workspace(self) -> None:
+        owner_user = uuid.uuid4()
+        second_user = uuid.uuid4()
+        workspace, created = await self.org_repo.find_or_create_by_salesforce_org_id(
+            salesforce_org_id="00D000000000AAA",
+            salesforce_org_name="Shared Org",
+            instance_url="https://na1.salesforce.com",
+            organization_type="Enterprise",
+            owner_id=owner_user,
+            slug="sf-00d000000000aaa",
+        )
+        assert created is True
+        await self._seed_session(
+            state="s", user_id=second_user, organization_id=None,
+        )
+
+        with (
+            patch.object(self.oauth, "exchange_code_for_tokens",
+                          return_value=self._valid_token_response(
+                              username="second@example.com",
+                          )),
+            self._patch_org_info(),
+        ):
+            request = SalesforceCallbackRequest(
+                code="c", state="s", code_verifier="v", environment="production",
+            )
+            response = await self.use_case.handle_callback(
+                request, self.org_id, second_user,
+            )
+
+        assert response.organization_id == workspace.id
+        assert response.username == "second@example.com"
+        assert len(self.org_repo._orgs) == 1
+        assert workspace.owner_id == owner_user
+        assert workspace.salesforce_org_name == "Shared Org"
+
+        members = await self.member_repo.list_by_org(workspace.id)
+        assert len(members) == 1
+        assert members[0].user_id == second_user
+        assert members[0].is_default is True
+
+        saved = await self.connection_repo.get_by_org_and_user(
+            workspace.id, second_user,
+        )
+        assert saved is not None
+        assert saved.username == "second@example.com"
+        assert await self.connection_repo.get_by_org_and_user(
+            workspace.id, owner_user,
+        ) is None
+        assert len(self.audit_repo.entries) == 1
+        assert self.audit_repo.entries[0].action == "salesforce.connected"
 
     @pytest.mark.asyncio
     async def test_disconnect_success(self) -> None:

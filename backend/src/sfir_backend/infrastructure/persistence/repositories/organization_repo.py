@@ -1,6 +1,7 @@
 import uuid
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sfir_backend.domain.entities.organization import Organization
@@ -35,6 +36,40 @@ class OrganizationRepository(IOrganizationRepository):
         )
         model = result.scalar_one_or_none()
         return self._to_domain(model) if model else None
+
+    async def find_or_create_by_salesforce_org_id(
+        self,
+        *,
+        salesforce_org_id: str,
+        salesforce_org_name: str,
+        instance_url: str,
+        organization_type: str,
+        owner_id: uuid.UUID,
+        slug: str,
+    ) -> tuple[Organization, bool]:
+        existing = await self.get_by_salesforce_org_id(salesforce_org_id)
+        if existing:
+            return existing, False
+
+        org = Organization.create_workspace(
+            salesforce_org_id=salesforce_org_id,
+            salesforce_org_name=salesforce_org_name,
+            instance_url=instance_url,
+            organization_type=organization_type,
+            owner_id=owner_id,
+            slug=slug,
+        )
+        try:
+            await self.save(org)
+        except IntegrityError:
+            # Concurrent provisioning for the same Salesforce org: the unique
+            # constraint on salesforce_org_id made one caller win; re-read it.
+            await self._session.rollback()
+            existing = await self.get_by_salesforce_org_id(salesforce_org_id)
+            if existing:
+                return existing, False
+            raise
+        return org, True
 
     async def list_by_user(self, user_id: uuid.UUID) -> list[Organization]:
         from sfir_backend.infrastructure.persistence.models.org_member import (
