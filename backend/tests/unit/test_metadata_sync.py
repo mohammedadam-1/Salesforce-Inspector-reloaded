@@ -11,6 +11,7 @@ from sfir_backend.application.use_cases.metadata_sync import SyncCoordinator
 from sfir_backend.config.settings import Settings
 from sfir_backend.domain.entities.metadata_sync import (
     MetadataVersion,
+    SyncCheckpoint,
     SyncHistory,
     SyncJob,
     SyncRetryQueueItem,
@@ -29,6 +30,7 @@ from sfir_backend.domain.repositories.sync_repos import (
 )
 from sfir_backend.domain.value_objects.metadata import (
     KNOWN_METADATA_TYPES,
+    BatchStatus,
     ConflictResolution,
     MetadataAction,
     RetryStatus,
@@ -109,6 +111,53 @@ class TestSyncJobEntity:
         assert job.processed_items == 5
         assert job.failed_items == 2
         assert job.progress == 0.5
+
+
+# ---------------------------------------------------------------------------
+# SyncCheckpoint entity tests
+# ---------------------------------------------------------------------------
+
+class TestSyncCheckpointEntity:
+    def test_create(self) -> None:
+        job_id = uuid.uuid4()
+        checkpoint = SyncCheckpoint.create(
+            sync_job_id=job_id,
+            organization_id=uuid.uuid4(),
+            metadata_type="ApexClass",
+            batch_id=37,
+            cursor="MyClass_B",
+        )
+        assert checkpoint.sync_job_id == job_id
+        assert checkpoint.metadata_type == "ApexClass"
+        assert checkpoint.batch_id == 37
+        assert checkpoint.cursor == "MyClass_B"
+        assert checkpoint.status == BatchStatus.COMPLETED
+        assert checkpoint.retry_count == 0
+
+    def test_mark_failed_increments_retry_count(self) -> None:
+        checkpoint = SyncCheckpoint.create(
+            sync_job_id=uuid.uuid4(),
+            organization_id=uuid.uuid4(),
+            metadata_type="ApexClass",
+            batch_id=37,
+            cursor="MyClass_B",
+        )
+        checkpoint.mark_failed()
+        assert checkpoint.status == BatchStatus.FAILED
+        assert checkpoint.retry_count == 1
+
+    def test_mark_completed_after_failure(self) -> None:
+        checkpoint = SyncCheckpoint.create(
+            sync_job_id=uuid.uuid4(),
+            organization_id=uuid.uuid4(),
+            metadata_type="ApexClass",
+            batch_id=37,
+            cursor="MyClass_B",
+        )
+        checkpoint.mark_failed()
+        checkpoint.mark_completed()
+        assert checkpoint.status == BatchStatus.COMPLETED
+        assert checkpoint.retry_count == 1
 
 
 # ---------------------------------------------------------------------------

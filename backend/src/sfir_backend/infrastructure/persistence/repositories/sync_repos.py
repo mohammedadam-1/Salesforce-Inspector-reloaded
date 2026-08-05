@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from sfir_backend.domain.entities.metadata_sync import (
     MetadataVersion,
+    SyncCheckpoint,
     SyncHistory,
     SyncJob,
     SyncRetryQueueItem,
@@ -13,12 +14,14 @@ from sfir_backend.domain.entities.metadata_sync import (
 )
 from sfir_backend.domain.repositories.sync_repos import (
     IMetadataVersionRepository,
+    ISyncCheckpointRepository,
     ISyncHistoryRepository,
     ISyncJobRepository,
     ISyncRetryQueueRepository,
     ISyncStatisticsRepository,
 )
 from sfir_backend.domain.value_objects.metadata import (
+    BatchStatus,
     MetadataAction,
     RetryStatus,
     SyncJobStatus,
@@ -26,6 +29,7 @@ from sfir_backend.domain.value_objects.metadata import (
 )
 from sfir_backend.infrastructure.persistence.models.metadata_sync import (
     MetadataVersionModel,
+    SyncCheckpointModel,
     SyncHistoryModel,
     SyncJobModel,
     SyncRetryQueueItemModel,
@@ -612,6 +616,95 @@ class SyncStatisticsRepository(ISyncStatisticsRepository):
             total_components_deleted=model.total_components_deleted,
             last_sync_at=model.last_sync_at,
             last_successful_sync_at=model.last_successful_sync_at,
+            created_at=model.created_at,
+            updated_at=model.updated_at,
+        )
+
+
+class SyncCheckpointRepository(ISyncCheckpointRepository):
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def save(self, checkpoint: SyncCheckpoint) -> SyncCheckpoint:
+        model = await self._session.execute(
+            select(SyncCheckpointModel)
+            .where(SyncCheckpointModel.sync_job_id == checkpoint.sync_job_id)
+            .where(SyncCheckpointModel.metadata_type == checkpoint.metadata_type)
+            .where(SyncCheckpointModel.batch_id == checkpoint.batch_id),
+        )
+        existing = model.scalar_one_or_none()
+        if existing:
+            existing.cursor = checkpoint.cursor
+            existing.status = checkpoint.status.value
+            existing.retry_count = checkpoint.retry_count
+            existing.updated_at = checkpoint.updated_at
+            checkpoint.id = existing.id
+        else:
+            self._session.add(
+                SyncCheckpointModel(
+                    id=checkpoint.id,
+                    sync_job_id=checkpoint.sync_job_id,
+                    organization_id=checkpoint.organization_id,
+                    metadata_type=checkpoint.metadata_type,
+                    batch_id=checkpoint.batch_id,
+                    cursor=checkpoint.cursor,
+                    status=checkpoint.status.value,
+                    retry_count=checkpoint.retry_count,
+                    created_at=checkpoint.created_at,
+                    updated_at=checkpoint.updated_at,
+                ),
+            )
+        await self._session.flush()
+        await self._session.commit()
+        return checkpoint
+
+    async def get_by_sync_job_and_type(
+        self, sync_job_id: uuid.UUID, metadata_type: str,
+    ) -> list[SyncCheckpoint]:
+        result = await self._session.execute(
+            select(SyncCheckpointModel)
+            .where(SyncCheckpointModel.sync_job_id == sync_job_id)
+            .where(SyncCheckpointModel.metadata_type == metadata_type)
+            .order_by(SyncCheckpointModel.batch_id.asc()),
+        )
+        return [self._to_domain(m) for m in result.scalars().all()]
+
+    async def get_last_by_sync_job_and_type(
+        self, sync_job_id: uuid.UUID, metadata_type: str,
+    ) -> SyncCheckpoint | None:
+        result = await self._session.execute(
+            select(SyncCheckpointModel)
+            .where(SyncCheckpointModel.sync_job_id == sync_job_id)
+            .where(SyncCheckpointModel.metadata_type == metadata_type)
+            .order_by(SyncCheckpointModel.batch_id.desc())
+            .limit(1),
+        )
+        model = result.scalar_one_or_none()
+        return self._to_domain(model) if model else None
+
+    async def list_by_sync_job(
+        self, sync_job_id: uuid.UUID,
+    ) -> list[SyncCheckpoint]:
+        result = await self._session.execute(
+            select(SyncCheckpointModel)
+            .where(SyncCheckpointModel.sync_job_id == sync_job_id)
+            .order_by(
+                SyncCheckpointModel.metadata_type.asc(),
+                SyncCheckpointModel.batch_id.asc(),
+            ),
+        )
+        return [self._to_domain(m) for m in result.scalars().all()]
+
+    def _to_domain(self, model: SyncCheckpointModel) -> SyncCheckpoint:
+        return SyncCheckpoint(
+            id=model.id,
+            sync_job_id=model.sync_job_id,
+            organization_id=model.organization_id,
+            metadata_type=model.metadata_type,
+            batch_id=model.batch_id,
+            cursor=model.cursor,
+            status=BatchStatus(model.status),
+            retry_count=model.retry_count,
             created_at=model.created_at,
             updated_at=model.updated_at,
         )

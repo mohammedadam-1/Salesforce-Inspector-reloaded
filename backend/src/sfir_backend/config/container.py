@@ -8,8 +8,6 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
 )
 
-from sfir_backend.infrastructure.security.rate_limiter import RateLimiter
-
 from sfir_backend.application.cache.services import (
     AutocompleteCacheService,
     ConnectionStatusCacheService,
@@ -45,6 +43,17 @@ from sfir_backend.application.pipeline.mapper.strategies import (
     ValidationRuleStrategy,
     WorkflowRuleStrategy,
 )
+from sfir_backend.application.pipeline.normalizer import CanonicalNormalizer
+from sfir_backend.application.pipeline.normalizer.rules import (
+    NormalizeDefaultsRule,
+    NormalizeEnumRule,
+    NormalizeNamesRule,
+    NormalizeNullsRule,
+    NormalizeOwnerRule,
+    NormalizeStringsRule,
+    NormalizeTimestampsRule,
+    NormalizeTypeNameRule,
+)
 from sfir_backend.application.pipeline.stages import (
     CanonicalMappingStage,
     GraphStage,
@@ -67,17 +76,6 @@ from sfir_backend.application.pipeline.validator.rules import (
     RequiredIdentifiersRule,
     RoleCircularReferenceRule,
     VersionRangeRule,
-)
-from sfir_backend.application.pipeline.normalizer import CanonicalNormalizer
-from sfir_backend.application.pipeline.normalizer.rules import (
-    NormalizeDefaultsRule,
-    NormalizeEnumRule,
-    NormalizeNamesRule,
-    NormalizeNullsRule,
-    NormalizeOwnerRule,
-    NormalizeStringsRule,
-    NormalizeTimestampsRule,
-    NormalizeTypeNameRule,
 )
 from sfir_backend.application.use_cases.ai.agent import (
     AgentService,
@@ -109,17 +107,17 @@ from sfir_backend.application.use_cases.ai.next_action_generator import (
     NextActionGenerator,
 )
 from sfir_backend.application.use_cases.ai.orchestrator import AIOrchestrator
-from sfir_backend.application.use_cases.ai.response_composer import ResponseComposer
 from sfir_backend.application.use_cases.ai.prompt_builder import PromptBuilder
+from sfir_backend.application.use_cases.ai.response_composer import ResponseComposer
 from sfir_backend.application.use_cases.ai.tools import ToolRegistry
 from sfir_backend.application.use_cases.auth import AuthUseCase
 from sfir_backend.application.use_cases.graph.repository_service import (
     RepositoryGraphService,
 )
-from sfir_backend.application.use_cases.metadata_sync import SyncCoordinator
 from sfir_backend.application.use_cases.metadata.validation_engine import (
     MetadataValidationEngine,
 )
+from sfir_backend.application.use_cases.metadata_sync import SyncCoordinator
 from sfir_backend.application.use_cases.organization import OrganizationUseCase
 from sfir_backend.application.use_cases.rbac import RBACUseCase
 from sfir_backend.application.use_cases.salesforce import SalesforceUseCase
@@ -133,13 +131,19 @@ from sfir_backend.infrastructure.cache.manager import CacheManager
 from sfir_backend.infrastructure.cache.metrics import CacheMetricsCollector
 from sfir_backend.infrastructure.cache.null_cache import NullCache
 from sfir_backend.infrastructure.cache.redis_cache import RedisCache
+from sfir_backend.infrastructure.cache.response_cache import ResponseCache
 from sfir_backend.infrastructure.cache.serializer import CacheSerializer
 from sfir_backend.infrastructure.database.session import (
     create_engine,
     create_session_factory,
 )
-from sfir_backend.infrastructure.jobs.engine import JobEngine
 from sfir_backend.infrastructure.documentation.engine import DocumentationEngine
+from sfir_backend.infrastructure.graph.cache import GraphCacheCoordinator
+from sfir_backend.infrastructure.graph.engine import DependencyGraphEngine
+from sfir_backend.infrastructure.jobs.engine import JobEngine
+from sfir_backend.infrastructure.oauth_session.redis_oauth_session_repo import (
+    RedisOAuthSessionRepository,
+)
 from sfir_backend.infrastructure.observability.alerting import AlertManager
 from sfir_backend.infrastructure.observability.diagnostics import DiagnosticsService
 from sfir_backend.infrastructure.observability.health import HealthCheckManager
@@ -149,11 +153,11 @@ from sfir_backend.infrastructure.observability.metrics import MetricsCollector
 from sfir_backend.infrastructure.observability.profiler import PerformanceProfiler
 from sfir_backend.infrastructure.observability.telemetry import TelemetryCoordinator
 from sfir_backend.infrastructure.observability.tracing import TracingManager
-from sfir_backend.infrastructure.oauth_session.redis_oauth_session_repo import (
-    RedisOAuthSessionRepository,
-)
 from sfir_backend.infrastructure.persistence.repositories.audit_log_repo import (
     AuditLogRepository,
+)
+from sfir_backend.infrastructure.persistence.repositories.metadata_repo import (
+    SQLAlchemyMetadataRepository,
 )
 from sfir_backend.infrastructure.persistence.repositories.org_member_repo import (
     OrgMemberRepository,
@@ -173,11 +177,9 @@ from sfir_backend.infrastructure.persistence.repositories.salesforce_connection_
 from sfir_backend.infrastructure.persistence.repositories.session_repo import (
     SessionRepository,
 )
-from sfir_backend.infrastructure.persistence.repositories.metadata_repo import (
-    SQLAlchemyMetadataRepository,
-)
 from sfir_backend.infrastructure.persistence.repositories.sync_repos import (
     MetadataVersionRepository,
+    SyncCheckpointRepository,
     SyncHistoryRepository,
     SyncJobRepository,
     SyncRetryQueueRepository,
@@ -186,6 +188,13 @@ from sfir_backend.infrastructure.persistence.repositories.sync_repos import (
 from sfir_backend.infrastructure.persistence.repositories.user_repo import (
     UserRepository,
 )
+from sfir_backend.infrastructure.resilience.circuit_breaker import (
+    CircuitBreakerRegistry,
+)
+from sfir_backend.infrastructure.resilience.graceful_degradation import (
+    GracefulDegradationManager,
+)
+from sfir_backend.infrastructure.resilience.retry_policy import RetryPolicy
 from sfir_backend.infrastructure.salesforce.graph.apex import ApexDependencyExtractor
 from sfir_backend.infrastructure.salesforce.graph.extractor import CompositeExtractor
 from sfir_backend.infrastructure.salesforce.graph.layout import LayoutDependencyExtractor
@@ -193,9 +202,6 @@ from sfir_backend.infrastructure.salesforce.graph.profile import ProfileDependen
 from sfir_backend.infrastructure.salesforce.graph.validation import (
     ValidationRuleDependencyExtractor,
 )
-from sfir_backend.infrastructure.graph.cache import GraphCacheCoordinator
-from sfir_backend.infrastructure.graph.engine import DependencyGraphEngine
-from sfir_backend.infrastructure.search.engine import SearchEngine
 from sfir_backend.infrastructure.salesforce.oauth import SalesforceOAuthService
 from sfir_backend.infrastructure.salesforce.parsers.apex import (
     ApexClassParser,
@@ -220,20 +226,14 @@ from sfir_backend.infrastructure.salesforce.sync.operations import (
     RetryManager,
     SyncRecovery,
 )
-from sfir_backend.infrastructure.cache.response_cache import ResponseCache
-from sfir_backend.infrastructure.resilience.circuit_breaker import (
-    CircuitBreakerRegistry,
-)
-from sfir_backend.infrastructure.resilience.graceful_degradation import (
-    GracefulDegradationManager,
-)
-from sfir_backend.infrastructure.resilience.retry_policy import RetryPolicy
+from sfir_backend.infrastructure.search.engine import SearchEngine
 from sfir_backend.infrastructure.security.encryption import EncryptionService
 from sfir_backend.infrastructure.security.jwt import JWTService
 from sfir_backend.infrastructure.security.password import PasswordService
 from sfir_backend.infrastructure.security.prompt_injection_filter import (
     PromptInjectionFilter,
 )
+from sfir_backend.infrastructure.security.rate_limiter import RateLimiter
 from sfir_backend.infrastructure.security.security_manager import SecurityManager
 from sfir_backend.infrastructure.security.tool_permission_guard import (
     ToolPermissionGuard,
@@ -258,6 +258,7 @@ def _make_repos_from_session(session: AsyncSession) -> dict[str, Any]:
         "sync_history": SyncHistoryRepository(session),
         "sync_retry_queue": SyncRetryQueueRepository(session),
         "sync_statistics": SyncStatisticsRepository(session),
+        "sync_checkpoint": SyncCheckpointRepository(session),
         "metadata": SQLAlchemyMetadataRepository(session),
     }
 
@@ -558,6 +559,7 @@ class Container:
             "sync_history": SyncHistoryRepository(session),
             "sync_retry_queue": SyncRetryQueueRepository(session),
             "sync_statistics": SyncStatisticsRepository(session),
+            "sync_checkpoint": SyncCheckpointRepository(session),
             "metadata": SQLAlchemyMetadataRepository(session),
         }
 

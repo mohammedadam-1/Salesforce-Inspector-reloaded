@@ -35,6 +35,11 @@ class RetryStatus(StrEnum):
     EXHAUSTED = "exhausted"
 
 
+class BatchStatus(StrEnum):
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 class ConflictResolution(StrEnum):
     KEEP_EXISTING = "keep_existing"
     OVERWRITE = "overwrite"

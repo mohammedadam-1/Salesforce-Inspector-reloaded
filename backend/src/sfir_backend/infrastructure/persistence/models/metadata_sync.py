@@ -1,7 +1,15 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import (
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSON, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -186,3 +194,37 @@ class SyncStatisticsModel(Base):
 
     organization = relationship("OrganizationModel")
     connection = relationship("SalesforceConnectionModel")
+
+
+class SyncCheckpointModel(Base):
+    __tablename__ = "sync_checkpoints"
+    __table_args__ = (
+        UniqueConstraint(
+            "sync_job_id", "metadata_type", "batch_id",
+            name="uq_sync_checkpoints_job_type_batch",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+    )
+    sync_job_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sync_jobs.id"), nullable=False, index=True,
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True,
+    )
+    metadata_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    batch_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    cursor: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="completed")
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.now, nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.now, onupdate=datetime.now, nullable=False,
+    )
+
+    sync_job = relationship("SyncJobModel")
+    organization = relationship("OrganizationModel")

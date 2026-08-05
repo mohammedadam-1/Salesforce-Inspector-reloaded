@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from sfir_backend.domain.value_objects.metadata import (
+    BatchStatus,
     MetadataAction,
     RetryStatus,
     SyncJobStatus,
@@ -262,4 +263,52 @@ class SyncStatistics:
         self.total_components_created += created
         self.total_components_updated += updated
         self.total_components_deleted += deleted
+        self.updated_at = datetime.now(UTC)
+
+
+@dataclass
+class SyncCheckpoint:
+    """Durable retrieval checkpoint for one batch of one metadata type.
+
+    Checkpoints make metadata retrieval resumable after worker crashes,
+    container restarts or deployment windows: a sync never restarts from
+    batch 1, it resumes from the last successful checkpoint's cursor.
+    """
+
+    id: uuid.UUID
+    sync_job_id: uuid.UUID
+    organization_id: uuid.UUID
+    metadata_type: str
+    batch_id: int
+    cursor: str | None
+    status: BatchStatus
+    retry_count: int = 0
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+    @staticmethod
+    def create(
+        sync_job_id: uuid.UUID,
+        organization_id: uuid.UUID,
+        metadata_type: str,
+        batch_id: int,
+        cursor: str | None,
+    ) -> "SyncCheckpoint":
+        return SyncCheckpoint(
+            id=uuid.uuid4(),
+            sync_job_id=sync_job_id,
+            organization_id=organization_id,
+            metadata_type=metadata_type,
+            batch_id=batch_id,
+            cursor=cursor,
+            status=BatchStatus.COMPLETED,
+        )
+
+    def mark_failed(self) -> None:
+        self.status = BatchStatus.FAILED
+        self.retry_count += 1
+        self.updated_at = datetime.now(UTC)
+
+    def mark_completed(self) -> None:
+        self.status = BatchStatus.COMPLETED
         self.updated_at = datetime.now(UTC)

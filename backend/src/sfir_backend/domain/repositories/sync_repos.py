@@ -3,6 +3,7 @@ from abc import ABC, abstractmethod
 
 from sfir_backend.domain.entities.metadata_sync import (
     MetadataVersion,
+    SyncCheckpoint,
     SyncHistory,
     SyncJob,
     SyncRetryQueueItem,
@@ -146,7 +147,7 @@ class ISyncRetryQueueRepository(ABC):
 class ISyncStatisticsRepository(ABC):
     @abstractmethod
     async def get_by_connection(
-        self, organization_id: uuid.UUID, connection_id: uuid.UUID,
+        self, org_id: uuid.UUID, connection_id: uuid.UUID,
     ) -> SyncStatistics | None: ...
 
     @abstractmethod
@@ -154,3 +155,25 @@ class ISyncStatisticsRepository(ABC):
 
     @abstractmethod
     async def update(self, stats: SyncStatistics) -> SyncStatistics: ...
+
+
+class ISyncCheckpointRepository(ABC):
+    """Durable per-batch checkpoints for resumable metadata retrieval."""
+
+    @abstractmethod
+    async def save(self, checkpoint: SyncCheckpoint) -> SyncCheckpoint: ...
+
+    @abstractmethod
+    async def get_by_sync_job_and_type(
+        self, sync_job_id: uuid.UUID, metadata_type: str,
+    ) -> list[SyncCheckpoint]: ...
+
+    @abstractmethod
+    async def get_last_by_sync_job_and_type(
+        self, sync_job_id: uuid.UUID, metadata_type: str,
+    ) -> SyncCheckpoint | None: ...
+
+    @abstractmethod
+    async def list_by_sync_job(
+        self, sync_job_id: uuid.UUID,
+    ) -> list[SyncCheckpoint]: ...
