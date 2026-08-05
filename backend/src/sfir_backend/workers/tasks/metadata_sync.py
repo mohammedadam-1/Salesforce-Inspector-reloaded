@@ -20,7 +20,6 @@ async def _execute_sync(
     from sfir_backend.application.dto.metadata_sync import StartSyncRequest
     from sfir_backend.config.container import Container
     from sfir_backend.config.settings import get_settings
-    from sfir_backend.domain.value_objects.metadata import SyncType
 
     container = Container(get_settings())
     await container.startup()
@@ -31,20 +30,11 @@ async def _execute_sync(
             sync_type=sync_type,
         )
         response = await coordinator.start_sync(
-            request, uuid.UUID(organization_id),
+            request, uuid.UUID(str(organization_id)),
         )
-        job = await coordinator.get_sync_job(
+        await coordinator.execute_sync_by_id(
             uuid.UUID(str(response.id)), uuid.UUID(str(organization_id)),
         )
-        if job:
-            from sfir_backend.domain.entities.metadata_sync import SyncJob
-            sync_job = SyncJob(
-                id=uuid.UUID(str(job.id)),
-                organization_id=uuid.UUID(str(organization_id)),
-                connection_id=uuid.UUID(str(connection_id)),
-                sync_type=SyncType(sync_type),
-            )
-            await coordinator.execute_sync(sync_job)
         return {"job_id": str(response.id), "sync_type": sync_type}
     finally:
         await container.shutdown()
@@ -86,6 +76,38 @@ def full_sync(self, organization_id: str, connection_id: str) -> dict:
     except Exception as exc:
         logger.error("full_sync_failed", error=str(exc))
         raise self.retry(exc=exc) from None
+
+
+@celery_app.task(
+    name="metadata.resume_sync",
+    bind=True,
+    max_retries=2,
+    default_retry_delay=60,
+    acks_late=True,
+)
+def resume_sync(self, organization_id: str, job_id: str) -> dict:
+    """Execute an existing (paused/failed) job, preserving persisted state."""
+    try:
+        return run_async(_execute_resumed_job(organization_id, job_id))
+    except Exception as exc:
+        logger.error("resume_sync_failed", error=str(exc))
+        raise self.retry(exc=exc) from None
+
+
+async def _execute_resumed_job(organization_id: str, job_id: str) -> dict:
+    from sfir_backend.config.container import Container
+    from sfir_backend.config.settings import get_settings
+
+    container = Container(get_settings())
+    await container.startup()
+    try:
+        coordinator = container.get_use_case("sync_coordinator")
+        await coordinator.execute_sync_by_id(
+            uuid.UUID(job_id), uuid.UUID(str(organization_id)),
+        )
+        return {"job_id": job_id}
+    finally:
+        await container.shutdown()
 
 
 @celery_app.task(

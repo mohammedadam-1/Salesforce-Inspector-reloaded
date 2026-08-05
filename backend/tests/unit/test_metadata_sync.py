@@ -56,7 +56,6 @@ from sfir_backend.infrastructure.security.encryption import EncryptionService
 from sfir_backend.shared.exceptions.application import ConflictError
 from sfir_backend.shared.exceptions.domain import EntityNotFoundError
 
-
 # ---------------------------------------------------------------------------
 # SyncJob entity tests
 # ---------------------------------------------------------------------------
@@ -1037,6 +1036,159 @@ class TestSyncCoordinator:
         retry_items = await self.retry_repo.list_pending_by_organization(self.org_id)
         assert len(retry_items) > 0
         assert "API failure" in retry_items[0].last_error
+
+    @pytest.mark.asyncio
+    async def test_execute_sync_cancelled_before_run_does_not_execute(self) -> None:
+        request = StartSyncRequest(connection_id=self.conn_id, sync_type="full")
+        created = await self.coordinator.start_sync(request, self.org_id)
+        job = await self.sync_job_repo.get_by_id(created.id)
+        job.start()
+        await self.sync_job_repo.update(job)
+        cancelled = await self.coordinator.cancel_sync(created.id, self.org_id)
+        assert cancelled.status == "cancelled"
+
+        result = await self.coordinator.execute_sync(job)
+
+        assert result.status == SyncJobStatus.CANCELLED
+        history = await self.sync_history_repo.list_by_organization(self.org_id)
+        assert len(history) == 1
+        assert history[0].status == SyncJobStatus.CANCELLED.value
+
+    @pytest.mark.asyncio
+    async def test_execute_sync_cancelled_mid_run_stops_early(self) -> None:
+        request = StartSyncRequest(connection_id=self.conn_id, sync_type="full")
+        created = await self.coordinator.start_sync(request, self.org_id)
+        job = await self.sync_job_repo.get_by_id(created.id)
+
+        from sfir_backend.domain.entities.salesforce_connection import SalesforceConnection
+        from sfir_backend.domain.value_objects.salesforce import SalesforceEnvironment
+        conn = SalesforceConnection.create(
+            organization_id=self.org_id, user_id=uuid.uuid4(),
+            environment=SalesforceEnvironment.PRODUCTION,
+            instance_url="https://na1.salesforce.com",
+            org_id="00D", username="t@t.com",
+        )
+        conn.mark_connected(
+            access_token_encrypted=self.encryption.encrypt("valid-token"),
+            refresh_token_encrypted="",
+        )
+        self.conn_repo._conn = conn
+
+        query_calls = 0
+
+        async def fake_query(*_args, **_kwargs):
+            nonlocal query_calls
+            query_calls += 1
+            if query_calls == 3:
+                job.status = SyncJobStatus.CANCELLED
+            return [{"Id": "01p001", "Name": "MyClass", "LastModifiedDate": "2026-01-01"}]
+
+        client = MagicMock()
+        client.query = AsyncMock(side_effect=fake_query)
+        client.close = AsyncMock()
+
+        with (
+            patch("sfir_backend.application.use_cases.metadata_sync.SalesforceClient",
+                  return_value=client),
+        ):
+            result = await self.coordinator.execute_sync(job)
+
+        assert result.status == SyncJobStatus.CANCELLED
+        assert result.error_message == ""
+        assert query_calls == 3
+        assert query_calls < len(KNOWN_METADATA_TYPES)
+        history = await self.sync_history_repo.list_by_organization(self.org_id)
+        assert len(history) == 1
+        assert history[0].status == SyncJobStatus.CANCELLED.value
+
+    @pytest.mark.asyncio
+    async def test_execute_sync_by_id_runs_persisted_job(self) -> None:
+        request = StartSyncRequest(connection_id=self.conn_id, sync_type="full")
+        created = await self.coordinator.start_sync(request, self.org_id)
+
+        from sfir_backend.domain.entities.salesforce_connection import SalesforceConnection
+        from sfir_backend.domain.value_objects.salesforce import SalesforceEnvironment
+        conn = SalesforceConnection.create(
+            organization_id=self.org_id, user_id=uuid.uuid4(),
+            environment=SalesforceEnvironment.PRODUCTION,
+            instance_url="https://na1.salesforce.com",
+            org_id="00D", username="t@t.com",
+        )
+        conn.mark_connected(
+            access_token_encrypted=self.encryption.encrypt("valid-token"),
+            refresh_token_encrypted="",
+        )
+        self.conn_repo._conn = conn
+
+        client = MagicMock()
+        client.query = AsyncMock(return_value=[
+            {"Id": "01p001", "Name": "MyClass", "LastModifiedDate": "2026-01-01"},
+        ])
+        client.rest = AsyncMock(return_value={
+            "Id": "01p001", "Name": "MyClass", "Body": "content",
+        })
+        client.close = AsyncMock()
+
+        with (
+            patch("sfir_backend.application.use_cases.metadata_sync.SalesforceClient",
+                  return_value=client),
+        ):
+            response = await self.coordinator.execute_sync_by_id(created.id, self.org_id)
+
+        assert response.id == created.id
+        assert response.status == "completed"
+
+    @pytest.mark.asyncio
+    async def test_execute_sync_by_id_wrong_org_raises(self) -> None:
+        request = StartSyncRequest(connection_id=self.conn_id, sync_type="full")
+        created = await self.coordinator.start_sync(request, self.org_id)
+        with pytest.raises(EntityNotFoundError):
+            await self.coordinator.execute_sync_by_id(created.id, uuid.uuid4())
+
+    @pytest.mark.asyncio
+    async def test_resume_then_execute_by_id_completes_persisted_job(self) -> None:
+        request = StartSyncRequest(connection_id=self.conn_id, sync_type="full")
+        created = await self.coordinator.start_sync(request, self.org_id)
+        job = await self.sync_job_repo.get_by_id(created.id)
+        job.start()
+        job.total_items = 100
+        job.processed_items = 40
+        await self.sync_job_repo.update(job)
+        paused = await self.coordinator.pause_sync(created.id, self.org_id)
+        assert paused.status == "paused"
+        resumed = await self.coordinator.resume_sync(created.id, self.org_id)
+        assert resumed.status == "running"
+
+        from sfir_backend.domain.entities.salesforce_connection import SalesforceConnection
+        from sfir_backend.domain.value_objects.salesforce import SalesforceEnvironment
+        conn = SalesforceConnection.create(
+            organization_id=self.org_id, user_id=uuid.uuid4(),
+            environment=SalesforceEnvironment.PRODUCTION,
+            instance_url="https://na1.salesforce.com",
+            org_id="00D", username="t@t.com",
+        )
+        conn.mark_connected(
+            access_token_encrypted=self.encryption.encrypt("valid-token"),
+            refresh_token_encrypted="",
+        )
+        self.conn_repo._conn = conn
+
+        client = MagicMock()
+        client.query = AsyncMock(return_value=[
+            {"Id": "01p001", "Name": "MyClass", "LastModifiedDate": "2026-01-01"},
+        ])
+        client.rest = AsyncMock(return_value={
+            "Id": "01p001", "Name": "MyClass", "Body": "content",
+        })
+        client.close = AsyncMock()
+
+        with (
+            patch("sfir_backend.application.use_cases.metadata_sync.SalesforceClient",
+                  return_value=client),
+        ):
+            response = await self.coordinator.execute_sync_by_id(created.id, self.org_id)
+
+        assert response.status == "completed"
 
 
 # ---------------------------------------------------------------------------

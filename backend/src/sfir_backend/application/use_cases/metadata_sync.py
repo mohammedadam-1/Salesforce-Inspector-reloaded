@@ -2,6 +2,7 @@
 
 import contextlib
 import uuid
+from datetime import UTC, datetime
 
 import structlog
 
@@ -39,9 +40,6 @@ from sfir_backend.domain.value_objects.metadata import (
 from sfir_backend.domain.value_objects.salesforce import (
     SalesforceEnvironment,
 )
-from sfir_backend.infrastructure.salesforce.sync.downloader import (
-    MetadataDownloadError,
-)
 from sfir_backend.infrastructure.salesforce.client import (
     SalesforceAuthError,
     SalesforceClient,
@@ -49,6 +47,7 @@ from sfir_backend.infrastructure.salesforce.client import (
 )
 from sfir_backend.infrastructure.salesforce.oauth import SalesforceOAuthService
 from sfir_backend.infrastructure.salesforce.sync.downloader import (
+    MetadataDownloadError,
     MetadataDownloadManager,
 )
 from sfir_backend.infrastructure.salesforce.sync.manifest import (
@@ -68,6 +67,7 @@ from sfir_backend.shared.exceptions.application import (
     RateLimitExceededError,
 )
 from sfir_backend.shared.exceptions.domain import EntityNotFoundError
+from sfir_backend.shared.exceptions.infrastructure import SyncCancelledError
 
 logger = structlog.get_logger(__name__)
 
@@ -178,6 +178,11 @@ class SyncCoordinator:
 
     async def execute_sync(self, job: SyncJob) -> SyncJob:
         """Execute a sync job with distributed lock + rate-limit handling."""
+        if job.status == SyncJobStatus.CANCELLED:
+            await self._record_sync_history(job, False)
+            logger.info("sync_job_already_cancelled", job_id=str(job.id))
+            return job
+
         locked = await self._acquire_lock(
             job.organization_id, job.connection_id,
         )
@@ -212,6 +217,7 @@ class SyncCoordinator:
 
             max_auth_retries = 2
             for attempt in range(max_auth_retries):
+                self._check_cancelled(job)
                 try:
                     if job.sync_type == SyncType.FULL:
                         await self._run_full_sync(job, tracker)
@@ -257,6 +263,13 @@ class SyncCoordinator:
                 failed=job.failed_items,
             )
 
+        except SyncCancelledError:
+            job.status = SyncJobStatus.CANCELLED
+            job.updated_at = datetime.now(UTC)
+            await self._sync_job_repo.update(job)
+            await self._record_sync_history(job, False)
+            logger.info("sync_job_cancelled", job_id=str(job.id))
+
         except (RateLimitExceededError, SalesforceRateLimitError) as exc:
             retry_after = getattr(exc, "retry_after", 60)
             if hasattr(exc, "context") and exc.context:
@@ -283,6 +296,26 @@ class SyncCoordinator:
             await self._release_lock(job.organization_id, job.connection_id)
 
         return job
+
+    @staticmethod
+    def _check_cancelled(job: SyncJob) -> None:
+        """Abort cooperatively if a cancellation was requested mid-run."""
+        if job.status == SyncJobStatus.CANCELLED:
+            raise SyncCancelledError(f"Sync job {job.id} was cancelled")
+
+    async def execute_sync_by_id(
+        self, job_id: uuid.UUID, organization_id: uuid.UUID,
+    ) -> SyncJobResponse:
+        """Load the persisted job and execute it (worker entry point).
+
+        The persisted entity is used so status/progress/error state from a
+        previous run (e.g. after resume) is honored instead of being reset.
+        """
+        job = await self._sync_job_repo.get_by_id(job_id)
+        if not job or job.organization_id != organization_id:
+            raise EntityNotFoundError("SyncJob", str(job_id))
+        executed = await self.execute_sync(job)
+        return self._job_to_response(executed)
 
     async def _refresh_connection_token(self, connection) -> None:
         refresh_token_encrypted = getattr(connection, "refresh_token_encrypted", "")
@@ -316,6 +349,7 @@ class SyncCoordinator:
         all_components: list[dict] = []
         any_type_succeeded = False
         for mtype in KNOWN_METADATA_TYPES:
+            self._check_cancelled(job)
             try:
                 components = await self._downloader.get_metadata_components(mtype)
                 all_components.extend(
@@ -413,6 +447,7 @@ class SyncCoordinator:
             type_batches[ctype].append(change)
 
         for ctype, batch_changes in type_batches.items():
+            self._check_cancelled(job)
             names = {c["component_name"] for c in batch_changes}
             raw_components = [
                 c for c in all_components
@@ -519,6 +554,7 @@ class SyncCoordinator:
 
         all_components: list[dict] = []
         for mtype in KNOWN_METADATA_TYPES:
+            self._check_cancelled(job)
             try:
                 components = await self._downloader.get_metadata_components(mtype)
                 all_components.extend(
@@ -576,6 +612,7 @@ class SyncCoordinator:
     ) -> None:
         if not job.metadata_type:
             return
+        self._check_cancelled(job)
         old_versions = await self._version_repo.list_by_organization(
             job.organization_id, limit=100000,
         )
@@ -665,6 +702,7 @@ class SyncCoordinator:
     ) -> None:
         all_components: list[dict] = []
         for mtype in KNOWN_METADATA_TYPES:
+            self._check_cancelled(job)
             try:
                 components = await self._downloader.get_metadata_components(mtype)
                 all_components.extend(
@@ -732,6 +770,7 @@ class SyncCoordinator:
         )
         all_components: list[dict] = []
         for mtype in KNOWN_METADATA_TYPES:
+            self._check_cancelled(job)
             try:
                 components = await self._downloader.get_metadata_components(mtype)
                 all_components.extend({"type": mtype, **c} for c in components)
@@ -782,6 +821,7 @@ class SyncCoordinator:
         self, job: SyncJob, tracker: SyncProgressTracker,
     ) -> None:
         if job.metadata_type:
+            self._check_cancelled(job)
             all_components: list[dict] = []
             try:
                 components = await self._downloader.get_metadata_components(
@@ -842,6 +882,7 @@ class SyncCoordinator:
     ) -> None:
         retry_items = await self._retry_repo.list_by_sync_job(job.id)
         for item in retry_items:
+            self._check_cancelled(job)
             if item.status.value in ("pending", "processing"):
                 try:
                     payload = await self._downloader.get_component_detail(

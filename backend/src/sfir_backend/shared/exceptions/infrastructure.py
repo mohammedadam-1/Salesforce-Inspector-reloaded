@@ -66,3 +66,23 @@ class LlmProviderError(InfrastructureException):
             detail=message,
             context=context,
         )
+
+
+class SyncCancelledError(InfrastructureException):
+    """Raised by the sync worker when a running sync job is cancelled.
+
+    Used to abort long-running metadata downloads cooperatively so the
+    job is not marked COMPLETED after a cancellation was requested.
+    """
+
+    def __init__(
+        self,
+        message: str = "Sync job was cancelled.",
+        context: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            status_code=409,
+            code="SYNC_CANCELLED",
+            detail=message,
+            context=context,
+        )

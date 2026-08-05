@@ -17,7 +17,12 @@ from sfir_backend.application.dto.metadata_sync import (
 from sfir_backend.application.use_cases.metadata_sync import SyncCoordinator
 from sfir_backend.workers.tasks.metadata_sync import (
     full_sync as full_sync_task,
+)
+from sfir_backend.workers.tasks.metadata_sync import (
     incremental_sync as incremental_sync_task,
+)
+from sfir_backend.workers.tasks.metadata_sync import (
+    resume_sync as resume_sync_task,
 )
 
 router = APIRouter(prefix="/sync", tags=["Metadata Sync"])
@@ -88,7 +93,12 @@ async def resume_sync(
     org_id: str = Depends(get_current_org_id),
     coordinator: SyncCoordinator = Depends(get_sync_coordinator),
 ) -> SyncJobResponse:
-    return await coordinator.resume_sync(uuid.UUID(job_id), org_id)
+    response = await coordinator.resume_sync(uuid.UUID(job_id), org_id)
+    resume_sync_task.apply_async(
+        args=[org_id, str(response.id)],
+        queue="metadata",
+    )
+    return response
 
 
 @router.get("/history")
