@@ -76,6 +76,7 @@ async def _make_auth_use_case() -> AuthUseCase:
     class FakeOrgRepo(IOrganizationRepository):
         async def get_by_id(self, org_id): return None
         async def get_by_slug(self, slug): return None
+        async def get_by_salesforce_org_id(self, salesforce_org_id): return None
         async def list_by_user(self, user_id): return []
         async def save(self, org): return org
         async def update(self, org): return org

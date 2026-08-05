@@ -24,6 +24,18 @@ class OrganizationRepository(IOrganizationRepository):
         model = result.scalar_one_or_none()
         return self._to_domain(model) if model else None
 
+    async def get_by_salesforce_org_id(
+        self,
+        salesforce_org_id: str,
+    ) -> Organization | None:
+        result = await self._session.execute(
+            select(OrganizationModel).where(
+                OrganizationModel.salesforce_org_id == salesforce_org_id,
+            ),
+        )
+        model = result.scalar_one_or_none()
+        return self._to_domain(model) if model else None
+
     async def list_by_user(self, user_id: uuid.UUID) -> list[Organization]:
         from sfir_backend.infrastructure.persistence.models.org_member import (
             OrgMemberModel,
@@ -46,6 +58,10 @@ class OrganizationRepository(IOrganizationRepository):
             owner_id=org.owner_id,
             status=org.status.value,
             settings=org.settings,
+            salesforce_org_id=org.salesforce_org_id,
+            salesforce_org_name=org.salesforce_org_name,
+            instance_url=org.instance_url,
+            organization_type=org.organization_type,
             created_at=org.created_at,
             updated_at=org.updated_at,
         )
@@ -63,6 +79,10 @@ class OrganizationRepository(IOrganizationRepository):
         model.description = org.description
         model.status = org.status.value
         model.settings = org.settings
+        model.salesforce_org_id = org.salesforce_org_id
+        model.salesforce_org_name = org.salesforce_org_name
+        model.instance_url = org.instance_url
+        model.organization_type = org.organization_type
         model.updated_at = org.updated_at
         await self._session.flush()
         await self._session.commit()
@@ -77,9 +97,7 @@ class OrganizationRepository(IOrganizationRepository):
 
     async def slug_exists(self, slug: str) -> bool:
         result = await self._session.execute(
-            select(OrganizationModel.id)
-            .where(OrganizationModel.slug == slug)
-            .limit(1),
+            select(OrganizationModel.id).where(OrganizationModel.slug == slug).limit(1),
         )
         return result.scalar_one_or_none() is not None
 
@@ -92,6 +110,10 @@ class OrganizationRepository(IOrganizationRepository):
             owner_id=model.owner_id,
             status=OrganizationStatus(model.status),
             settings=model.settings if model.settings is not None else {},
+            salesforce_org_id=model.salesforce_org_id,
+            salesforce_org_name=model.salesforce_org_name,
+            instance_url=model.instance_url,
+            organization_type=model.organization_type,
             created_at=model.created_at,
             updated_at=model.updated_at,
         )

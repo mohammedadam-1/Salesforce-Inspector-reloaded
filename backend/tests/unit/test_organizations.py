@@ -45,6 +45,11 @@ async def _make_org_use_case() -> OrganizationUseCase:
                 if o.slug == slug:
                     return o
             return None
+        async def get_by_salesforce_org_id(self, salesforce_org_id):
+            for o in saved_orgs.values():
+                if o.salesforce_org_id == salesforce_org_id:
+                    return o
+            return None
         async def list_by_user(self, uid):
             return [o for o in saved_orgs.values() if o.owner_id == uid]
         async def save(self, o):

@@ -17,6 +17,8 @@ class OrgMemberStatus(StrEnum):
 
 
 class OrganizationStatus(StrEnum):
+    PROVISIONING = "provisioning"
+    READY = "ready"
     ACTIVE = "active"
     DISABLED = "disabled"
     SUSPENDED = "suspended"

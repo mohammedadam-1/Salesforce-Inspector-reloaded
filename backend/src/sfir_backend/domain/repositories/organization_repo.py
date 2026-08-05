@@ -12,6 +12,12 @@ class IOrganizationRepository(ABC):
     async def get_by_slug(self, slug: str) -> Organization | None: ...
 
     @abstractmethod
+    async def get_by_salesforce_org_id(
+        self,
+        salesforce_org_id: str,
+    ) -> Organization | None: ...
+
+    @abstractmethod
     async def list_by_user(self, user_id: uuid.UUID) -> list[Organization]: ...
 
     @abstractmethod
