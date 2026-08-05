@@ -691,6 +691,7 @@ class Container:
             recovery=recovery,
             oauth_service=self._services["oauth"],
             metadata_pipeline=self._make_metadata_pipeline(),
+            checkpoint_repo=repos["sync_checkpoint"],
         )
 
     def create_sync_coordinator(self, session: AsyncSession) -> SyncCoordinator:
@@ -720,6 +721,7 @@ class Container:
             recovery=recovery,
             oauth_service=self._services["oauth"],
             metadata_pipeline=self.create_metadata_pipeline(session),
+            checkpoint_repo=repos["sync_checkpoint"],
         )
 
     def _make_metadata_pipeline(self) -> MetadataPipeline:

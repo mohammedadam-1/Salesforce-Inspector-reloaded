@@ -23,6 +23,7 @@ from sfir_backend.domain.repositories.salesforce_repos import (
 )
 from sfir_backend.domain.repositories.sync_repos import (
     IMetadataVersionRepository,
+    ISyncCheckpointRepository,
     ISyncHistoryRepository,
     ISyncJobRepository,
     ISyncRetryQueueRepository,
@@ -53,6 +54,9 @@ from sfir_backend.infrastructure.salesforce.sync.operations import (
     SyncProgressTracker,
     SyncRecovery,
     SyncStatusManager,
+)
+from sfir_backend.infrastructure.salesforce.sync.retriever import (
+    MetadataBatchRetriever,
 )
 from sfir_backend.infrastructure.security.encryption import EncryptionService
 from sfir_backend.shared.exceptions.application import ConflictError
@@ -861,6 +865,29 @@ class FakeConnRepo(ISalesforceConnectionRepository):
     async def delete(self, cid): pass
 
 
+class FakeCheckpointRepo(ISyncCheckpointRepository):
+    def __init__(self):
+        self._items: list[SyncCheckpoint] = []
+
+    async def save(self, checkpoint):
+        self._items.append(checkpoint)
+        return checkpoint
+
+    async def get_by_sync_job_and_type(self, sync_job_id, metadata_type):
+        return sorted(
+            [c for c in self._items
+             if c.sync_job_id == sync_job_id and c.metadata_type == metadata_type],
+            key=lambda c: c.batch_id,
+        )
+
+    async def get_last_by_sync_job_and_type(self, sync_job_id, metadata_type):
+        items = await self.get_by_sync_job_and_type(sync_job_id, metadata_type)
+        return items[-1] if items else None
+
+    async def list_by_sync_job(self, sync_job_id):
+        return [c for c in self._items if c.sync_job_id == sync_job_id]
+
+
 # ---------------------------------------------------------------------------
 # SyncCoordinator tests
 # ---------------------------------------------------------------------------
@@ -881,7 +908,9 @@ class TestSyncCoordinator:
         self.stats_repo = FakeStatsRepo()
         self.audit_repo = FakeAuditRepo()
         self.conn_repo = FakeConnRepo()
+        self.checkpoint_repo = FakeCheckpointRepo()
         self.downloader = MetadataDownloadManager()
+        self.retriever = MetadataBatchRetriever(self.downloader, batch_size=2)
         self.hash_calc = MetadataHashCalculator()
         self.change_detector = MetadataChangeDetector()
         self.manifest_gen = ManifestGenerator()
@@ -904,6 +933,8 @@ class TestSyncCoordinator:
             retry_manager=self.retry_manager,
             recovery=self.recovery,
             oauth_service=Mock(spec=SalesforceOAuthService),
+            checkpoint_repo=self.checkpoint_repo,
+            retriever=self.retriever,
         )
 
     @pytest.mark.asyncio
@@ -1238,6 +1269,314 @@ class TestSyncCoordinator:
             response = await self.coordinator.execute_sync_by_id(created.id, self.org_id)
 
         assert response.status == "completed"
+
+
+# ---------------------------------------------------------------------------
+# Batched retrieval + durable checkpoint tests (Step 2b)
+# ---------------------------------------------------------------------------
+
+class TestBatchedCheckpointing:
+    def setup_method(self) -> None:
+        self.settings = Settings(
+            environment="testing",
+            encryption_key="test-encryption-key-32chr!",
+        )
+        self.org_id = uuid.uuid4()
+        self.conn_id = uuid.uuid4()
+        self.encryption = EncryptionService(self.settings)
+        self.sync_job_repo = FakeSyncJobRepo()
+        self.version_repo = FakeVersionRepo()
+        self.sync_history_repo = FakeSyncHistoryRepo()
+        self.retry_repo = FakeRetryRepo()
+        self.stats_repo = FakeStatsRepo()
+        self.audit_repo = FakeAuditRepo()
+        self.conn_repo = FakeConnRepo()
+        self.checkpoint_repo = FakeCheckpointRepo()
+        self.downloader = MetadataDownloadManager()
+
+        self.conn = None
+        from sfir_backend.domain.entities.salesforce_connection import SalesforceConnection
+        from sfir_backend.domain.value_objects.salesforce import SalesforceEnvironment
+        conn = SalesforceConnection.create(
+            organization_id=self.org_id, user_id=uuid.uuid4(),
+            environment=SalesforceEnvironment.PRODUCTION,
+            instance_url="https://na1.salesforce.com",
+            org_id="00D", username="t@t.com",
+        )
+        conn.mark_connected(
+            access_token_encrypted=self.encryption.encrypt("valid-token"),
+            refresh_token_encrypted="",
+        )
+        self.conn_repo._conn = conn
+
+    def _make_client(self, apex_records, fail_cursor=None, crash_call=None):
+        """Client whose query serves cursor-batched ApexClass rows.
+
+        All other metadata types return an empty batch. ``fail_cursor``
+        fails exactly once on the batch starting after that cursor;
+        ``crash_call`` raises once on the Nth ApexClass query call.
+        """
+        call_log: list[tuple[str, str | None]] = []
+        failed_once = set()
+        crashed = False
+        apex_calls = 0
+
+        async def fake_query(soql, *_args, **_kwargs):
+            nonlocal crashed, apex_calls
+            mtype = soql.split(" FROM ", 1)[1].split(" ", 1)[0]
+            cursor = None
+            if "Name > '" in soql:
+                cursor = soql.split("Name > '", 1)[1].split("'", 1)[0]
+            if mtype == "ApexClass":
+                apex_calls += 1
+                call_log.append(("ApexClass", cursor))
+                if crash_call is not None and not crashed and apex_calls == crash_call:
+                    crashed = True
+                    raise Exception("simulated worker crash")
+                if fail_cursor is not None and cursor == fail_cursor \
+                        and fail_cursor not in failed_once:
+                    failed_once.add(fail_cursor)
+                    raise Exception("simulated batch failure")
+                limit = int(soql.split("LIMIT ", 1)[1])
+                records = apex_records
+                if cursor:
+                    records = [r for r in records if r["Name"] > cursor]
+                return records[:limit]
+            call_log.append((mtype, cursor))
+            return []
+
+        client = MagicMock()
+        client.query = AsyncMock(side_effect=fake_query)
+        client.rest = AsyncMock(return_value={
+            "Id": "01p001", "Name": "MyClass", "Body": "content",
+        })
+        client.close = AsyncMock()
+        return client, call_log
+
+    def _make_coordinator(self, batch_size=2):
+        retriever = MetadataBatchRetriever(self.downloader, batch_size=batch_size)
+        return SyncCoordinator(
+            connection_repo=self.conn_repo,
+            sync_job_repo=self.sync_job_repo,
+            version_repo=self.version_repo,
+            sync_history_repo=self.sync_history_repo,
+            retry_repo=self.retry_repo,
+            statistics_repo=self.stats_repo,
+            audit_log_repo=self.audit_repo,
+            encryption_service=self.encryption,
+            download_manager=self.downloader,
+            hash_calculator=MetadataHashCalculator(),
+            change_detector=MetadataChangeDetector(),
+            manifest_generator=ManifestGenerator(),
+            retry_manager=RetryManager(retry_repo=self.retry_repo),
+            recovery=SyncRecovery(retry_manager=RetryManager(retry_repo=self.retry_repo)),
+            oauth_service=Mock(spec=SalesforceOAuthService),
+            checkpoint_repo=self.checkpoint_repo,
+            retriever=retriever,
+        )
+
+    def _make_records(self, names):
+        return [
+            {"Id": f"01p{i:04d}", "Name": name, "LastModifiedDate": "2026-01-01"}
+            for i, name in enumerate(names)
+        ]
+
+    @pytest.mark.asyncio
+    async def test_full_sync_checkpoints_each_batch(self) -> None:
+        coordinator = self._make_coordinator()
+        client, _ = self._make_client(self._make_records(["A", "B", "C", "D", "E"]))
+        with patch("sfir_backend.application.use_cases.metadata_sync.SalesforceClient",
+                  return_value=client):
+            result = await coordinator.execute_sync(
+                SyncJob.create(self.org_id, self.conn_id, SyncType.FULL),
+            )
+
+        assert result.status == SyncJobStatus.COMPLETED
+        assert result.progress == 1.0
+        assert result.processed_items == 5
+        checkpoints = await self.checkpoint_repo.list_by_sync_job(result.id)
+        assert len(checkpoints) == 3
+        assert [c.batch_id for c in checkpoints] == [1, 2, 3]
+        assert [c.cursor for c in checkpoints] == ["B", "D", "E"]
+        assert all(c.status == BatchStatus.COMPLETED for c in checkpoints)
+        versions = await self.version_repo.list_by_organization(self.org_id)
+        assert len(versions) == 5
+
+    @pytest.mark.asyncio
+    async def test_worker_crash_resumes_from_last_checkpoint(self) -> None:
+        coordinator = self._make_coordinator()
+        client, call_log = self._make_client(
+            self._make_records(["A", "B", "C", "D", "E"]), crash_call=3,
+        )
+        job = SyncJob.create(self.org_id, self.conn_id, SyncType.FULL)
+        with patch("sfir_backend.application.use_cases.metadata_sync.SalesforceClient",
+                  return_value=client):
+            result = await coordinator.execute_sync(job)
+
+        assert result.status == SyncJobStatus.COMPLETED
+        run1 = await self.checkpoint_repo.list_by_sync_job(job.id)
+        assert len(run1) == 3
+        assert [c.batch_id for c in run1] == [1, 2, 3]
+        assert all(c.status == BatchStatus.COMPLETED for c in run1[:2])
+        assert run1[2].status == BatchStatus.FAILED
+        assert run1[2].retry_count == 1
+        apex_calls_run1 = [c for c in call_log if c[0] == "ApexClass"]
+        assert len(apex_calls_run1) == 3
+
+        client2, call_log2 = self._make_client(
+            self._make_records(["A", "B", "C", "D", "E"]),
+        )
+        with patch("sfir_backend.application.use_cases.metadata_sync.SalesforceClient",
+                  return_value=client2):
+            response = await coordinator.execute_sync_by_id(job.id, self.org_id)
+
+        assert response.status == "completed"
+        apex_calls_run2 = [c for c in call_log2 if c[0] == "ApexClass"]
+        assert apex_calls_run2 == [("ApexClass", "D")]
+        checkpoints = await self.checkpoint_repo.list_by_sync_job(job.id)
+        assert len(checkpoints) == 4
+        assert checkpoints[-1].batch_id == 3
+        assert checkpoints[-1].status == BatchStatus.COMPLETED
+        versions = await self.version_repo.list_by_organization(self.org_id)
+        assert len(versions) == 5
+        assert all(v.version_number == 1 for v in versions)
+        assert len({v.component_name for v in versions}) == 5
+
+    @pytest.mark.asyncio
+    async def test_batch_failure_resumes_same_batch(self) -> None:
+        coordinator = self._make_coordinator()
+        client, call_log = self._make_client(
+            self._make_records(["A", "B", "C", "D", "E"]), fail_cursor="B",
+        )
+        job = SyncJob.create(self.org_id, self.conn_id, SyncType.FULL)
+        with patch("sfir_backend.application.use_cases.metadata_sync.SalesforceClient",
+                  return_value=client):
+            result = await coordinator.execute_sync(job)
+
+        assert result.status == SyncJobStatus.COMPLETED
+        assert result.failed_items == 1
+        run1 = await self.checkpoint_repo.get_by_sync_job_and_type(
+            job.id, "ApexClass",
+        )
+        assert len(run1) == 2
+        assert run1[0].status == BatchStatus.COMPLETED
+        assert run1[1].status == BatchStatus.FAILED
+        assert run1[1].batch_id == 2
+        assert run1[1].cursor == "B"
+        assert run1[1].retry_count == 1
+        apex_calls_run1 = [c for c in call_log if c[0] == "ApexClass"]
+        assert len(apex_calls_run1) == 2
+
+        client2, call_log2 = self._make_client(
+            self._make_records(["A", "B", "C", "D", "E"]),
+        )
+        with patch("sfir_backend.application.use_cases.metadata_sync.SalesforceClient",
+                  return_value=client2):
+            response = await coordinator.execute_sync_by_id(job.id, self.org_id)
+
+        assert response.status == "completed"
+        apex_calls_run2 = [c for c in call_log2 if c[0] == "ApexClass"]
+        assert apex_calls_run2 == [("ApexClass", "B"), ("ApexClass", "D")]
+        checkpoints = await self.checkpoint_repo.get_by_sync_job_and_type(
+            job.id, "ApexClass",
+        )
+        retried = [c for c in checkpoints if c.batch_id == 2]
+        assert len(retried) == 2
+        assert retried[0].status == BatchStatus.FAILED
+        assert retried[0].retry_count == 1
+        assert retried[1].status == BatchStatus.COMPLETED
+        assert retried[1].retry_count == 1
+        assert checkpoints[-1].batch_id == 3
+        versions = await self.version_repo.list_by_organization(self.org_id)
+        assert len(versions) == 5
+        assert len({v.component_name for v in versions}) == 5
+
+    @pytest.mark.asyncio
+    async def test_large_org_resume_skips_completed_batches(self) -> None:
+        coordinator = self._make_coordinator(batch_size=100)
+        names = [f"C{i:04d}" for i in range(1, 2001)]
+        records = self._make_records(names)
+        client, _ = self._make_client(records, crash_call=15)
+        job = SyncJob.create(self.org_id, self.conn_id, SyncType.FULL)
+        with patch("sfir_backend.application.use_cases.metadata_sync.SalesforceClient",
+                  return_value=client):
+            result = await coordinator.execute_sync(job)
+
+        assert result.status == SyncJobStatus.COMPLETED
+        run1 = await self.checkpoint_repo.get_by_sync_job_and_type(job.id, "ApexClass")
+        assert len(run1) == 15
+        assert all(c.status == BatchStatus.COMPLETED for c in run1[:14])
+        assert run1[14].status == BatchStatus.FAILED
+        assert run1[14].retry_count == 1
+        assert len(await self.version_repo.list_by_organization(self.org_id)) == 1400
+
+        client2, call_log2 = self._make_client(records)
+        with patch("sfir_backend.application.use_cases.metadata_sync.SalesforceClient",
+                  return_value=client2):
+            response = await coordinator.execute_sync_by_id(job.id, self.org_id)
+
+        assert response.status == "completed"
+        apex_calls_run2 = [c for c in call_log2 if c[0] == "ApexClass"]
+        assert len(apex_calls_run2) == 7
+        assert apex_calls_run2[0] == ("ApexClass", "C1400")
+        checkpoints = await self.checkpoint_repo.get_by_sync_job_and_type(
+            job.id, "ApexClass",
+        )
+        assert len(checkpoints) == 21
+        assert all(c.status == BatchStatus.COMPLETED for c in checkpoints[-6:])
+        versions = await self.version_repo.list_by_organization(self.org_id)
+        assert len(versions) == 2000
+        assert len({v.component_name for v in versions}) == 2000
+        assert len({v.id for v in versions}) == 2000
+
+    @pytest.mark.asyncio
+    async def test_scheduled_sync_skips_created_components(self) -> None:
+        coordinator = self._make_coordinator()
+        client, _ = self._make_client(self._make_records(["A", "B", "C", "D", "E"]))
+        with patch("sfir_backend.application.use_cases.metadata_sync.SalesforceClient",
+                  return_value=client):
+            full = await coordinator.execute_sync(
+                SyncJob.create(self.org_id, self.conn_id, SyncType.FULL),
+            )
+        assert full.status == SyncJobStatus.COMPLETED
+
+        records = self._make_records(["A", "B", "C", "D", "E", "F"])
+        records[0]["LastModifiedDate"] = "2026-02-01"
+        client2, _ = self._make_client(records)
+        with patch("sfir_backend.application.use_cases.metadata_sync.SalesforceClient",
+                  return_value=client2):
+            scheduled = await coordinator.execute_sync(
+                SyncJob.create(self.org_id, self.conn_id, SyncType.SCHEDULED),
+            )
+
+        assert scheduled.status == SyncJobStatus.COMPLETED
+        assert scheduled.processed_items == 1
+        versions = await self.version_repo.list_by_organization(self.org_id)
+        assert len(versions) == 6
+        assert "F" not in {v.component_name for v in versions}
+        a_versions = [v for v in versions if v.component_name == "A"]
+        assert max(v.version_number for v in a_versions) == 2
+
+    @pytest.mark.asyncio
+    async def test_retry_recovery_persisted_batches_not_reduplicated(self) -> None:
+        coordinator = self._make_coordinator()
+        client, _ = self._make_client(self._make_records(["A", "B"]), fail_cursor=None)
+        job = SyncJob.create(self.org_id, self.conn_id, SyncType.FULL)
+        with patch("sfir_backend.application.use_cases.metadata_sync.SalesforceClient",
+                  return_value=client):
+            result = await coordinator.execute_sync(job)
+        assert result.status == SyncJobStatus.COMPLETED
+
+        client2, call_log2 = self._make_client(self._make_records(["A", "B"]))
+        with patch("sfir_backend.application.use_cases.metadata_sync.SalesforceClient",
+                  return_value=client2):
+            response = await coordinator.execute_sync_by_id(job.id, self.org_id)
+        assert response.status == "completed"
+        apex_calls_run2 = [c for c in call_log2 if c[0] == "ApexClass"]
+        assert apex_calls_run2 == [("ApexClass", "B")]
+        versions = await self.version_repo.list_by_organization(self.org_id)
+        assert len(versions) == 2
+        assert len({v.component_name for v in versions}) == 2
 
 
 # ---------------------------------------------------------------------------

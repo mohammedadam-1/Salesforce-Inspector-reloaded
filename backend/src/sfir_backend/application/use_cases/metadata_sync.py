@@ -16,6 +16,7 @@ from sfir_backend.application.dto.metadata_sync import (
 from sfir_backend.application.pipeline import MetadataPipeline, PipelineContext
 from sfir_backend.domain.entities.metadata_sync import (
     MetadataVersion,
+    SyncCheckpoint,
     SyncHistory,
     SyncJob,
     SyncStatistics,
@@ -26,6 +27,7 @@ from sfir_backend.domain.repositories.salesforce_repos import (
 )
 from sfir_backend.domain.repositories.sync_repos import (
     IMetadataVersionRepository,
+    ISyncCheckpointRepository,
     ISyncHistoryRepository,
     ISyncJobRepository,
     ISyncRetryQueueRepository,
@@ -33,6 +35,7 @@ from sfir_backend.domain.repositories.sync_repos import (
 )
 from sfir_backend.domain.value_objects.metadata import (
     KNOWN_METADATA_TYPES,
+    BatchStatus,
     MetadataAction,
     SyncJobStatus,
     SyncType,
@@ -60,6 +63,9 @@ from sfir_backend.infrastructure.salesforce.sync.operations import (
     SyncProgressTracker,
     SyncRecovery,
     SyncStatusManager,
+)
+from sfir_backend.infrastructure.salesforce.sync.retriever import (
+    MetadataBatchRetriever,
 )
 from sfir_backend.infrastructure.security.encryption import EncryptionService
 from sfir_backend.shared.exceptions.application import (
@@ -93,6 +99,8 @@ class SyncCoordinator:
         recovery: SyncRecovery,
         oauth_service: SalesforceOAuthService,
         metadata_pipeline: MetadataPipeline | None = None,
+        checkpoint_repo: ISyncCheckpointRepository | None = None,
+        retriever: MetadataBatchRetriever | None = None,
     ) -> None:
         self._connection_repo = connection_repo
         self._sync_job_repo = sync_job_repo
@@ -110,6 +118,8 @@ class SyncCoordinator:
         self._recovery = recovery
         self._oauth_service = oauth_service
         self._pipeline = metadata_pipeline
+        self._checkpoint_repo = checkpoint_repo
+        self._retriever = retriever or MetadataBatchRetriever(download_manager)
 
     def _lock_key(self, org_id: uuid.UUID, conn_id: uuid.UUID) -> str:
         return f"sync_lock:{org_id}:{conn_id}"
@@ -346,16 +356,38 @@ class SyncCoordinator:
     async def _run_full_sync(
         self, job: SyncJob, tracker: SyncProgressTracker,
     ) -> None:
-        all_components: list[dict] = []
+        await self._run_types_sync(
+            job, tracker, "full_sync",
+            include_created=True,
+            use_pipeline=self._pipeline is not None,
+            abort_if_all_failed=True,
+        )
+
+    async def _run_types_sync(
+        self,
+        job: SyncJob,
+        tracker: SyncProgressTracker,
+        change_source: str,
+        include_created: bool,
+        use_pipeline: bool,
+        abort_if_all_failed: bool,
+    ) -> None:
+        old_versions = await self._version_repo.list_by_organization(
+            job.organization_id, limit=100000,
+        )
+        await tracker.start(0)
         any_type_succeeded = False
+        total = 0
         for mtype in KNOWN_METADATA_TYPES:
             self._check_cancelled(job)
             try:
-                components = await self._downloader.get_metadata_components(mtype)
-                all_components.extend(
-                    {"type": mtype, **c} for c in components
+                total += await self._sync_metadata_type_batched(
+                    job, tracker, mtype, change_source,
+                    old_versions, include_created, use_pipeline,
                 )
                 any_type_succeeded = True
+            except SyncCancelledError:
+                raise
             except Exception as exc:
                 logger.warning(
                     "sync_metadata_type_failed",
@@ -371,65 +403,181 @@ class SyncCoordinator:
                 )
                 job.failed_items += 1
 
-        if not any_type_succeeded and not all_components:
+        if abort_if_all_failed and not any_type_succeeded and total == 0:
             raise MetadataDownloadError(
                 "All metadata type queries failed; aborting sync to avoid "
                 "false deletion of the existing manifest",
             )
 
-        await tracker.start(len(all_components))
-        manifest = self._manifest_generator.generate_manifest(all_components)
+    async def _sync_metadata_type_batched(
+        self,
+        job: SyncJob,
+        tracker: SyncProgressTracker,
+        metadata_type: str,
+        change_source: str,
+        old_versions: list[MetadataVersion],
+        include_created: bool,
+        use_pipeline: bool,
+    ) -> int:
+        """Retrieve one metadata type in deterministic batches.
 
-        old_versions = await self._version_repo.list_by_organization(
-            job.organization_id, limit=100000,
+        A checkpoint is persisted after every successful batch; a worker
+        crash or restart resumes from the last checkpoint (a failed batch
+        is retried from its cursor) instead of restarting from batch 1.
+        """
+        checkpoints = await self._checkpoint_repo.get_by_sync_job_and_type(
+            job.id, metadata_type,
         )
+        latest = checkpoints[-1] if checkpoints else None
+        if latest is None:
+            cursor: str | None = None
+            batch_id = 1
+            retry_count = 0
+        elif latest.status == BatchStatus.FAILED:
+            cursor = latest.cursor
+            batch_id = latest.batch_id
+            retry_count = latest.retry_count
+        else:
+            cursor = latest.cursor
+            batch_id = latest.batch_id + 1
+            retry_count = latest.retry_count
 
-        changes = self._change_detector.detect_changes(old_versions, manifest)
-
-        deleted_changes = [c for c in changes if MetadataAction(c["action"]) == MetadataAction.DELETED]
-        live_changes = [c for c in changes if MetadataAction(c["action"]) != MetadataAction.DELETED]
-
-        for change in deleted_changes:
+        fetched_names: set[str] = set()
+        total = 0
+        while True:
+            self._check_cancelled(job)
+            checkpoint = SyncCheckpoint.create(
+                sync_job_id=job.id,
+                organization_id=job.organization_id,
+                metadata_type=metadata_type,
+                batch_id=batch_id,
+                cursor=cursor,
+            )
+            checkpoint.retry_count = retry_count
             try:
-                version = MetadataVersion.create(
+                batch = await self._retriever.fetch_batch(metadata_type, cursor)
+                if not batch:
+                    break
+                components = [{"type": metadata_type, **c} for c in batch]
+                for record in batch:
+                    name = record.get("Name") or record.get("name")
+                    if name:
+                        fetched_names.add(name)
+                next_cursor = self._retriever.next_cursor(batch)
+                await self._process_batch_components(
+                    job, tracker, metadata_type, components,
+                    change_source, old_versions, include_created, use_pipeline,
+                )
+                checkpoint.cursor = next_cursor
+                checkpoint.mark_completed()
+                await self._checkpoint_repo.save(checkpoint)
+                await tracker.add_total(len(components))
+                total += len(components)
+                if len(batch) < self._retriever.batch_size:
+                    break
+                cursor = next_cursor
+                batch_id += 1
+                retry_count = 0
+            except SyncCancelledError:
+                raise
+            except Exception as exc:
+                checkpoint.mark_failed()
+                await self._checkpoint_repo.save(checkpoint)
+                raise MetadataDownloadError(
+                    f"Batch {batch_id} of {metadata_type} failed: {exc}",
+                ) from exc
+
+        if fetched_names:
+            await self._persist_type_deletions(
+                job, tracker, metadata_type, fetched_names,
+                old_versions, change_source,
+            )
+        return total
+
+    async def _process_batch_components(
+        self,
+        job: SyncJob,
+        tracker: SyncProgressTracker,
+        metadata_type: str,
+        components: list[dict],
+        change_source: str,
+        old_versions: list[MetadataVersion],
+        include_created: bool,
+        use_pipeline: bool,
+    ) -> None:
+        manifest = self._manifest_generator.generate_manifest(
+            components, component_type=metadata_type,
+        )
+        changes = self._change_detector.detect_changes(old_versions, manifest)
+        live_changes = [
+            c for c in changes
+            if MetadataAction(c["action"]) != MetadataAction.DELETED
+            and (include_created or MetadataAction(c["action"]) != MetadataAction.CREATED)
+        ]
+        if not live_changes:
+            return
+        if use_pipeline and self._pipeline:
+            await self._pipeline_process_batches(
+                job, tracker, live_changes, components, change_source,
+            )
+        else:
+            await self._pipeline_process_batches_fallback(
+                job, tracker, live_changes, components, old_versions, change_source,
+            )
+
+    async def _persist_type_deletions(
+        self,
+        job: SyncJob,
+        tracker: SyncProgressTracker,
+        metadata_type: str,
+        fetched_names: set[str],
+        old_versions: list[MetadataVersion],
+        change_source: str,
+    ) -> None:
+        """Mark deletions only after the whole type was retrieved.
+
+        Components persisted by this very job on a previous run are excluded
+        so a resumed sync never produces false deletions.
+        """
+        for version in old_versions:
+            if (
+                version.component_type != metadata_type
+                or version.sync_job_id == job.id
+                or version.action == MetadataAction.DELETED
+                or version.component_name in fetched_names
+            ):
+                continue
+            try:
+                new_version = MetadataVersion.create(
                     organization_id=job.organization_id,
                     sync_job_id=job.id,
-                    component_type=change["component_type"],
-                    component_name=change["component_name"],
-                    component_id=change.get("component_id", ""),
-                    hash=change["hash"],
+                    component_type=metadata_type,
+                    component_name=version.component_name,
+                    component_id=version.component_id,
+                    hash=version.hash,
                     version_number=self._next_version(
-                        old_versions, change["component_type"], change["component_name"],
+                        old_versions, metadata_type, version.component_name,
                     ),
                     action=MetadataAction.DELETED,
                     payload=None,
-                    change_source="full_sync",
+                    change_source=change_source,
                 )
-                await self._version_repo.save(version)
+                await self._version_repo.save(new_version)
                 await tracker.increment_processed()
             except Exception as exc:
                 logger.warning(
                     "sync_deleted_component_failed",
-                    component=change.get("component_name"),
+                    component=version.component_name,
                     error=str(exc),
                 )
                 job.failed_items += 1
                 await self._retry_manager.enqueue(
                     organization_id=job.organization_id,
                     sync_job_id=job.id,
-                    component_type=change["component_type"],
-                    component_name=change["component_name"],
+                    component_type=metadata_type,
+                    component_name=version.component_name,
                     error=str(exc),
                 )
-
-        if live_changes and self._pipeline:
-            await self._pipeline_process_batches(
-                job, tracker, live_changes, all_components, "full_sync",
-            )
-        elif live_changes:
-            await self._pipeline_process_batches_fallback(
-                job, tracker, live_changes, all_components, old_versions, "full_sync",
-            )
 
     async def _pipeline_process_batches(
         self,
@@ -548,269 +696,60 @@ class SyncCoordinator:
     async def _run_incremental_sync(
         self, job: SyncJob, tracker: SyncProgressTracker,
     ) -> None:
-        old_versions = await self._version_repo.list_by_organization(
-            job.organization_id, limit=100000,
+        await self._run_types_sync(
+            job, tracker, "incremental_sync",
+            include_created=True,
+            use_pipeline=self._pipeline is not None,
+            abort_if_all_failed=False,
         )
-
-        all_components: list[dict] = []
-        for mtype in KNOWN_METADATA_TYPES:
-            self._check_cancelled(job)
-            try:
-                components = await self._downloader.get_metadata_components(mtype)
-                all_components.extend(
-                    {"type": mtype, **c} for c in components
-                )
-            except Exception:
-                continue
-
-        await tracker.start(len(all_components))
-        manifest = self._manifest_generator.generate_manifest(all_components)
-        changes = self._change_detector.detect_changes(old_versions, manifest)
-
-        deleted_changes = [c for c in changes if MetadataAction(c["action"]) == MetadataAction.DELETED]
-        live_changes = [c for c in changes if MetadataAction(c["action"]) != MetadataAction.DELETED]
-
-        for change in deleted_changes:
-            try:
-                version = MetadataVersion.create(
-                    organization_id=job.organization_id,
-                    sync_job_id=job.id,
-                    component_type=change["component_type"],
-                    component_name=change["component_name"],
-                    component_id=change.get("component_id", ""),
-                    hash=change["hash"],
-                    version_number=self._next_version(
-                        old_versions, change["component_type"], change["component_name"],
-                    ),
-                    action=MetadataAction.DELETED,
-                    payload=None,
-                    change_source="incremental_sync",
-                )
-                await self._version_repo.save(version)
-                await tracker.increment_processed()
-            except Exception as exc:
-                job.failed_items += 1
-                await self._retry_manager.enqueue(
-                    organization_id=job.organization_id,
-                    sync_job_id=job.id,
-                    component_type=change["component_type"],
-                    component_name=change["component_name"],
-                    error=str(exc),
-                )
-
-        if live_changes and self._pipeline:
-            await self._pipeline_process_batches(
-                job, tracker, live_changes, all_components, "incremental_sync",
-            )
-        elif live_changes:
-            await self._pipeline_process_batches_fallback(
-                job, tracker, live_changes, all_components, old_versions, "incremental_sync",
-            )
 
     async def _run_metadata_type_sync(
         self, job: SyncJob, tracker: SyncProgressTracker,
     ) -> None:
         if not job.metadata_type:
             return
-        self._check_cancelled(job)
         old_versions = await self._version_repo.list_by_organization(
             job.organization_id, limit=100000,
         )
-        components = await self._downloader.get_metadata_components(job.metadata_type)
-        all_components = [{"type": job.metadata_type, **c} for c in components]
-
-        await tracker.start(len(all_components))
-        manifest = self._manifest_generator.generate_manifest(
-            all_components, component_type=job.metadata_type,
-        )
-        changes = self._change_detector.detect_changes(old_versions, manifest)
-
-        deleted_changes = [c for c in changes if MetadataAction(c["action"]) == MetadataAction.DELETED]
-        live_changes = [c for c in changes if MetadataAction(c["action"]) != MetadataAction.DELETED]
-
-        for change in deleted_changes:
-            try:
-                version = MetadataVersion.create(
-                    organization_id=job.organization_id,
-                    sync_job_id=job.id,
-                    component_type=job.metadata_type,
-                    component_name=change["component_name"],
-                    component_id=change.get("component_id", ""),
-                    hash=change["hash"],
-                    version_number=self._next_version(
-                        old_versions, job.metadata_type, change["component_name"],
-                    ),
-                    action=MetadataAction.DELETED,
-                    payload=None,
-                    change_source="metadata_type_sync",
-                )
-                await self._version_repo.save(version)
-                await tracker.increment_processed()
-            except Exception as exc:
-                job.failed_items += 1
-                await self._retry_manager.enqueue(
-                    organization_id=job.organization_id,
-                    sync_job_id=job.id,
-                    component_type=job.metadata_type,
-                    component_name=change["component_name"],
-                    error=str(exc),
-                )
-
-        if live_changes and self._pipeline:
-            await self._pipeline_process_batches(
-                job, tracker, live_changes, all_components, "metadata_type_sync",
+        await tracker.start(0)
+        try:
+            await self._sync_metadata_type_batched(
+                job, tracker, job.metadata_type, "metadata_type_sync",
+                old_versions, include_created=True,
+                use_pipeline=self._pipeline is not None,
             )
-        elif live_changes:
-            for change in live_changes:
-                try:
-                    action = MetadataAction(change["action"])
-                    payload = None
-                    component_id = change.get("component_id", "")
-                    if component_id and action != MetadataAction.DELETED:
-                        with contextlib.suppress(Exception):
-                            payload = await self._downloader.get_component_detail(
-                                job.metadata_type, component_id,
-                            )
-                    version = MetadataVersion.create(
-                        organization_id=job.organization_id,
-                        sync_job_id=job.id,
-                        component_type=job.metadata_type,
-                        component_name=change["component_name"],
-                        component_id=component_id,
-                        hash=change["hash"],
-                        version_number=self._next_version(
-                            old_versions, job.metadata_type, change["component_name"],
-                        ),
-                        action=action,
-                        payload=payload,
-                        change_source="metadata_type_sync",
-                    )
-                    await self._version_repo.save(version)
-                    await tracker.increment_processed()
-                except Exception as exc:
-                    job.failed_items += 1
-                    await self._retry_manager.enqueue(
-                        organization_id=job.organization_id,
-                        sync_job_id=job.id,
-                        component_type=job.metadata_type,
-                        component_name=change["component_name"],
-                        error=str(exc),
-                    )
+        except Exception as exc:
+            logger.warning(
+                "sync_metadata_type_failed",
+                metadata_type=job.metadata_type,
+                error=str(exc),
+            )
+            job.failed_items += 1
+            await self._retry_manager.enqueue(
+                organization_id=job.organization_id,
+                sync_job_id=job.id,
+                component_type=job.metadata_type,
+                component_name="__batch__",
+                error=str(exc),
+            )
 
     async def _run_forced_sync(
         self, job: SyncJob, tracker: SyncProgressTracker,
     ) -> None:
-        all_components: list[dict] = []
-        for mtype in KNOWN_METADATA_TYPES:
-            self._check_cancelled(job)
-            try:
-                components = await self._downloader.get_metadata_components(mtype)
-                all_components.extend(
-                    {"type": mtype, **c} for c in components
-                )
-            except Exception as exc:
-                logger.warning(
-                    "forced_sync_type_failed", metadata_type=mtype, error=str(exc),
-                )
-                await self._retry_manager.enqueue(
-                    organization_id=job.organization_id,
-                    sync_job_id=job.id,
-                    component_type=mtype,
-                    component_name="__batch__",
-                    error=str(exc),
-                )
-                job.failed_items += 1
-
-        await tracker.start(len(all_components))
-        manifest = self._manifest_generator.generate_manifest(all_components)
-        old_versions = await self._version_repo.list_by_organization(
-            job.organization_id, limit=100000,
+        await self._run_types_sync(
+            job, tracker, "forced_sync",
+            include_created=True, use_pipeline=False,
+            abort_if_all_failed=False,
         )
-        changes = self._change_detector.detect_changes(old_versions, manifest)
-
-        for change in changes:
-            try:
-                action = MetadataAction(change["action"])
-                component_type = change["component_type"]
-                component_name = change["component_name"]
-                component_id = change.get("component_id", "")
-
-                payload = None
-                if component_id and action != MetadataAction.DELETED:
-                    with contextlib.suppress(Exception):
-                        payload = await self._downloader.get_component_detail(
-                            component_type, component_id,
-                        )
-
-                version = MetadataVersion.create(
-                    organization_id=job.organization_id,
-                    sync_job_id=job.id,
-                    component_type=component_type,
-                    component_name=component_name,
-                    component_id=component_id,
-                    hash=change["hash"],
-                    version_number=self._next_version(
-                        old_versions, component_type, component_name,
-                    ),
-                    action=action,
-                    payload=payload,
-                    change_source="forced_sync",
-                )
-                await self._version_repo.save(version)
-                await tracker.increment_processed()
-            except Exception as exc:
-                logger.warning("forced_sync_component_failed", error=str(exc))
-                job.failed_items += 1
 
     async def _run_scheduled_sync(
         self, job: SyncJob, tracker: SyncProgressTracker,
     ) -> None:
-        old_versions = await self._version_repo.list_by_organization(
-            job.organization_id, limit=100000,
+        await self._run_types_sync(
+            job, tracker, "scheduled_sync",
+            include_created=False, use_pipeline=False,
+            abort_if_all_failed=False,
         )
-        all_components: list[dict] = []
-        for mtype in KNOWN_METADATA_TYPES:
-            self._check_cancelled(job)
-            try:
-                components = await self._downloader.get_metadata_components(mtype)
-                all_components.extend({"type": mtype, **c} for c in components)
-            except Exception:
-                continue
-
-        await tracker.start(len(all_components))
-        manifest = self._manifest_generator.generate_manifest(all_components)
-        changes = self._change_detector.detect_changes(old_versions, manifest)
-
-        only_updates = [c for c in changes if c.get("action") != "created"]
-        for change in only_updates:
-            try:
-                action = MetadataAction(change["action"])
-                component_id = change.get("component_id", "")
-                payload = None
-                if component_id and action != MetadataAction.DELETED:
-                    with contextlib.suppress(Exception):
-                        payload = await self._downloader.get_component_detail(
-                            change["component_type"], component_id,
-                        )
-                version = MetadataVersion.create(
-                    organization_id=job.organization_id,
-                    sync_job_id=job.id,
-                    component_type=change["component_type"],
-                    component_name=change["component_name"],
-                    component_id=component_id,
-                    hash=change["hash"],
-                    version_number=self._next_version(
-                        old_versions, change["component_type"], change["component_name"],
-                    ),
-                    action=action,
-                    payload=payload,
-                    change_source="scheduled_sync",
-                )
-                await self._version_repo.save(version)
-                await tracker.increment_processed()
-            except Exception as exc:
-                job.failed_items += 1
-                logger.warning("scheduled_sync_failed", error=str(exc))
 
     async def _run_manual_sync(
         self, job: SyncJob, tracker: SyncProgressTracker,
@@ -821,61 +760,18 @@ class SyncCoordinator:
         self, job: SyncJob, tracker: SyncProgressTracker,
     ) -> None:
         if job.metadata_type:
-            self._check_cancelled(job)
-            all_components: list[dict] = []
-            try:
-                components = await self._downloader.get_metadata_components(
-                    job.metadata_type,
-                )
-                all_components = [{"type": job.metadata_type, **c} for c in components]
-            except Exception as exc:
-                logger.warning("partial_sync_failed", error=str(exc))
-                job.failed_items += 1
-                return
-
-            await tracker.start(len(all_components))
-            manifest = self._manifest_generator.generate_manifest(
-                all_components, component_type=job.metadata_type,
-            )
             old_versions = await self._version_repo.list_by_organization(
                 job.organization_id, limit=100000,
             )
-            changes = self._change_detector.detect_changes(old_versions, manifest)
-            for change in changes:
-                try:
-                    action = MetadataAction(change["action"])
-                    component_id = change.get("component_id", "")
-                    payload = None
-                    if component_id and action != MetadataAction.DELETED:
-                        with contextlib.suppress(Exception):
-                            payload = await self._downloader.get_component_detail(
-                                job.metadata_type, component_id,
-                            )
-                    version = MetadataVersion.create(
-                        organization_id=job.organization_id,
-                        sync_job_id=job.id,
-                        component_type=job.metadata_type,
-                        component_name=change["component_name"],
-                        component_id=component_id,
-                        hash=change["hash"],
-                        version_number=self._next_version(
-                            old_versions, job.metadata_type, change["component_name"],
-                        ),
-                        action=action,
-                        payload=payload,
-                        change_source="partial_sync",
-                    )
-                    await self._version_repo.save(version)
-                    await tracker.increment_processed()
-                except Exception as exc:
-                    job.failed_items += 1
-                    await self._retry_manager.enqueue(
-                        organization_id=job.organization_id,
-                        sync_job_id=job.id,
-                        component_type=job.metadata_type,
-                        component_name=change["component_name"],
-                        error=str(exc),
-                    )
+            await tracker.start(0)
+            try:
+                await self._sync_metadata_type_batched(
+                    job, tracker, job.metadata_type, "partial_sync",
+                    old_versions, include_created=True, use_pipeline=False,
+                )
+            except Exception as exc:
+                logger.warning("partial_sync_failed", error=str(exc))
+                job.failed_items += 1
 
     async def _run_recovery_sync(
         self, job: SyncJob, tracker: SyncProgressTracker,

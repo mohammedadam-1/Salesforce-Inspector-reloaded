@@ -95,6 +95,10 @@ class SyncProgressTracker:
         self._job.progress = 0.0
         await self._update_progress()
 
+    async def add_total(self, count: int) -> None:
+        self._job.total_items += count
+        await self._update_progress()
+
     async def increment_processed(self, count: int = 1) -> None:
         self._job.processed_items += count
         await self._update_progress()
