@@ -25,6 +25,7 @@ from sfir_backend.application.pipeline.normalizer.rules import (
     NormalizeNamesRule,
     NormalizeNullsRule,
     NormalizeOwnerRule,
+    NormalizeParentRule,
     NormalizeStringsRule,
     NormalizeTimestampsRule,
     NormalizeTypeNameRule,
@@ -47,7 +48,7 @@ from sfir_backend.domain.canonical.core import (
     MetadataObject,
     MetadataRelationship,
 )
-from sfir_backend.domain.canonical.flows import MetadataFlow
+from sfir_backend.domain.canonical.flows import MetadataFlow, MetadataFlowVersion
 from sfir_backend.domain.canonical.layouts import (
     MetadataLayout,
     MetadataRecordType,
@@ -830,3 +831,209 @@ class TestNormalizationStage:
         ctx.validated_components = [_component()]
         result = await stage.execute(ctx)
         assert len(result.errors) >= 1
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 Step 1 — canonical surface: every type exposes stable id, type,
+# developer name, api name, namespace, parent, children, references,
+# created/modified dates, version, deleted flag and raw source.
+# ---------------------------------------------------------------------------
+
+
+class TestPhase5CanonicalSurface:
+    @pytest.fixture
+    def normalizer(self) -> CanonicalNormalizer:
+        n = CanonicalNormalizer()
+        n.register(NormalizeTypeNameRule())
+        n.register(NormalizeNamesRule())
+        n.register(NormalizeStringsRule())
+        n.register(NormalizeNullsRule())
+        n.register(NormalizeDefaultsRule())
+        n.register(NormalizeEnumRule())
+        n.register(NormalizeOwnerRule())
+        n.register(NormalizeTimestampsRule())
+        n.register(NormalizeParentRule())
+        return n
+
+    def test_all_phase5_types_normalize(self, normalizer: CanonicalNormalizer) -> None:
+        types = [
+            "object", "field", "flow", "apex_class", "validation_rule",
+            "profile", "permission_set", "layout", "record_type",
+            "custom_metadata", "global_value_set", "trigger", "relationship",
+        ]
+        components = [
+            MetadataComponent(
+                id=str(i),
+                organization_id=_make_org_id(),
+                type=ctype,
+                api_name=f"Comp{i}",
+                version=1,
+                metadata_properties={"object_api_name": "Account"},
+            )
+            for i, ctype in enumerate(types)
+        ]
+        report = normalizer.normalize(components)
+        assert len(report.normalized) == len(types)
+        assert report.errors == []
+        for doc in report.normalized:
+            assert doc.identity and len(doc.identity) == 64
+            assert doc.type
+            assert doc.api_name
+            assert doc.developer_name == doc.api_name
+            assert doc.version == 1
+            assert doc.deleted is False
+            assert doc.raw_source == {"object_api_name": "Account"}
+            assert isinstance(doc.relationships, list)
+            assert isinstance(doc.children_identities, list)
+
+    def test_field_parent_object_and_children_aggregation(
+        self, normalizer: CanonicalNormalizer,
+    ) -> None:
+        org = _make_org_id()
+        obj = MetadataObject(organization_id=org, api_name="Account", label="Account")
+        fld = MetadataField(
+            organization_id=org, api_name="Account.MyField__c",
+            object_api_name="Account", field_type=FieldType.TEXT,
+        )
+        report = normalizer.normalize([obj, fld])
+        assert len(report.normalized) == 2
+        obj_doc = next(d for d in report.normalized if d.type == "Object")
+        fld_doc = next(d for d in report.normalized if d.type == "Field")
+        assert fld_doc.parent_identity == obj_doc.identity
+        assert fld_doc.parent_key is not None
+        assert fld_doc.parent_key.api_name == "Account"
+        assert fld_doc.parent_key.type == "object"
+        assert fld_doc.developer_name == "MyField__c"
+        assert fld_doc.api_name == "Account.MyField__c"
+        assert obj_doc.children_identities == [fld_doc.identity]
+
+    def test_parent_reference_kept_when_parent_not_in_batch(
+        self, normalizer: CanonicalNormalizer,
+    ) -> None:
+        fld = MetadataField(
+            organization_id=_make_org_id(),
+            api_name="Account.MyField__c",
+            object_api_name="Account",
+        )
+        report = normalizer.normalize([fld])
+        doc = report.normalized[0]
+        assert doc.parent_identity is not None
+        assert doc.parent_key.api_name == "Account"
+        assert doc.children_identities == []
+
+    def test_trigger_parent_object(self, normalizer: CanonicalNormalizer) -> None:
+        t = MetadataTrigger(
+            organization_id=_make_org_id(),
+            api_name="AccountTrigger",
+            object_api_name="Account",
+            body="trigger AccountTrigger on Account () {}",
+        )
+        report = normalizer.normalize([t])
+        doc = report.normalized[0]
+        assert doc.parent_key is not None
+        assert doc.parent_key.type == "object"
+        assert doc.parent_key.api_name == "Account"
+        assert doc.parent_identity is not None
+
+    def test_flow_version_parent_flow(self, normalizer: CanonicalNormalizer) -> None:
+        fv = MetadataFlowVersion(
+            organization_id=_make_org_id(),
+            api_name="MyFlow-1",
+            flow_api_name="MyFlow",
+            version_number=1,
+        )
+        report = normalizer.normalize([fv])
+        doc = report.normalized[0]
+        assert doc.parent_key is not None
+        assert doc.parent_key.type == "flow"
+        assert doc.parent_key.api_name == "MyFlow"
+        assert doc.developer_name == "MyFlow-1"
+
+    def test_top_level_component_has_no_parent(self, normalizer: CanonicalNormalizer) -> None:
+        obj = MetadataObject(organization_id=_make_org_id(), api_name="Account")
+        report = normalizer.normalize([obj])
+        doc = report.normalized[0]
+        assert doc.parent_identity is None
+        assert doc.parent_key is None
+
+    def test_deleted_flag(self, normalizer: CanonicalNormalizer) -> None:
+        deleted = MetadataObject(
+            organization_id=_make_org_id(), api_name="Gone__c",
+            status=MetadataStatus.DELETED,
+        )
+        report = normalizer.normalize([deleted])
+        assert report.normalized[0].deleted is True
+
+        gone_by_prop = MetadataObject(
+            organization_id=_make_org_id(), api_name="Gone2__c",
+            metadata_properties={"IsDeleted": True},
+        )
+        report = normalizer.normalize([gone_by_prop])
+        assert report.normalized[0].deleted is True
+
+    def test_dates_populated_from_source(self, normalizer: CanonicalNormalizer) -> None:
+        obj = MetadataObject(
+            organization_id=_make_org_id(), api_name="Account",
+            created_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            last_modified_date=datetime(2024, 6, 1, tzinfo=timezone.utc),
+        )
+        report = normalizer.normalize([obj])
+        doc = report.normalized[0]
+        assert doc.created_at is not None
+        assert doc.updated_at is not None
+        assert doc.created_at.startswith("2024-01-01")
+        assert doc.updated_at.startswith("2024-06-01")
+
+    def test_dates_from_properties(self, normalizer: CanonicalNormalizer) -> None:
+        comp = MetadataComponent(
+            id="c1", organization_id=_make_org_id(),
+            type="apex_class", api_name="T",
+            metadata_properties={
+                "CreatedDate": "2024-03-05T10:00:00.000Z",
+                "LastModifiedDate": "2024-07-05T10:00:00.000Z",
+            },
+        )
+        report = normalizer.normalize([comp])
+        doc = report.normalized[0]
+        assert doc.created_at is not None
+        assert doc.updated_at is not None
+
+    def test_raw_source_captured(self, normalizer: CanonicalNormalizer) -> None:
+        obj = MetadataObject(
+            organization_id=_make_org_id(), api_name="Account",
+            label="Account Object",
+            metadata_properties={"sharing_model": "ReadWrite"},
+        )
+        report = normalizer.normalize([obj])
+        doc = report.normalized[0]
+        assert doc.raw_source.get("sharing_model") == "ReadWrite"
+        assert doc.label == "Account Object"
+
+    def test_developer_name_namespaced(self, normalizer: CanonicalNormalizer) -> None:
+        comp = MetadataComponent(
+            id="c1", organization_id=_make_org_id(),
+            type="apex_class", api_name="ns__MyClass", namespace="ns",
+        )
+        report = normalizer.normalize([comp])
+        assert report.normalized[0].developer_name == "MyClass"
+
+    def test_same_sync_twice_produces_identical_documents(
+        self, normalizer: CanonicalNormalizer,
+    ) -> None:
+        obj = MetadataObject(
+            organization_id=_make_org_id(), api_name="Account",
+            metadata_properties={"sharing_model": "ReadWrite"},
+        )
+        fld = MetadataField(
+            organization_id=obj.organization_id,
+            api_name="Account.MyField__c",
+            object_api_name="Account",
+            field_type=FieldType.TEXT,
+        )
+        first = normalizer.normalize([obj, fld])
+        second = normalizer.normalize([obj, fld])
+        first_dumps = [d.model_dump() for d in first.normalized]
+        second_dumps = [d.model_dump() for d in second.normalized]
+        for dump in first_dumps + second_dumps:
+            dump.pop("normalized_at", None)
+        assert first_dumps == second_dumps

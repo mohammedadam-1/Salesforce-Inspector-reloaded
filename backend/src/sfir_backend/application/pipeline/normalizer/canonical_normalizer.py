@@ -13,8 +13,10 @@ from sfir_backend.application.pipeline.normalizer.identity_service import (
     IdentityService,
 )
 from sfir_backend.application.pipeline.normalizer.normalized_model import (
+    ComponentKey,
     NormalizationReport,
     NormalizedDocument,
+    coerce_iso_datetime,
     utc_now_str,
 )
 from sfir_backend.application.pipeline.normalizer.relationship_normalizer import (
@@ -66,7 +68,26 @@ class CanonicalNormalizer(INormalizer):
                 skipped.append({"api_name": component.api_name or "?", "type": component.type, "error": str(exc)})
                 logger.warning("canonical_normalizer_component_failed", api_name=component.api_name, type=component.type, error=str(exc))
 
+        self._aggregate_children(normalized)
         return NormalizationReport(normalized=normalized, skipped=skipped, errors=errors)
+
+    @staticmethod
+    def _aggregate_children(docs: list[NormalizedDocument]) -> None:
+        """Link children to their parents present in the same batch.
+
+        A normalized document declares ``parent_identity``; any document in
+        the batch whose identity matches is appended to the parent's
+        ``children_identities`` so containment is visible in both
+        directions without building a graph.
+        """
+        by_identity: dict[str, NormalizedDocument] = {}
+        for doc in docs:
+            if doc.identity:
+                by_identity[doc.identity] = doc
+        for doc in docs:
+            parent = doc.parent_identity and by_identity.get(doc.parent_identity)
+            if parent and doc.identity not in parent.children_identities:
+                parent.children_identities.append(doc.identity)
 
     def _normalize_one(
         self,
@@ -82,6 +103,7 @@ class CanonicalNormalizer(INormalizer):
         identity = self._identity_service.compute_component_hash_from_component(component)
         content_hash = self._fingerprint_service.compute_content_hash(component)
 
+        props = dict(component.metadata_properties or {})
         raw_rels: list = []
         for rel in component.relationships or []:
             tid = self._identity_service.compute_component_hash(
@@ -104,9 +126,27 @@ class CanonicalNormalizer(INormalizer):
         relationship_hash = self._fingerprint_service.compute_relationship_hash(deduped)
         fingerprint = self._fingerprint_service.compute_fingerprint(content_hash, relationship_hash)
 
+        deleted = component.status == "deleted" or bool(
+            props.get("isDeleted") or props.get("IsDeleted"),
+        )
+        created_at = coerce_iso_datetime(
+            getattr(component, "created_date", None)
+            or props.get("CreatedDate") or props.get("created_date")
+            or props.get("createdDate"),
+        )
+        updated_at = coerce_iso_datetime(
+            getattr(component, "last_modified_date", None)
+            or props.get("LastModifiedDate") or props.get("last_modified_date")
+            or props.get("lastModifiedDate") or props.get("SystemModstamp"),
+        )
+
         doc = NormalizedDocument(
             identity=identity,
-            component_key=None,
+            component_key=ComponentKey(
+                type=component.type,
+                api_name=component.api_name,
+                namespace=component.namespace,
+            ),
             type=component.type,
             api_name=component.api_name,
             qualified_name=component.api_name,
@@ -116,15 +156,17 @@ class CanonicalNormalizer(INormalizer):
             description=component.description or None,
             version=component.version,
             status=component.status.value if hasattr(component.status, "value") else str(component.status),
+            deleted=deleted,
             source_platform=platform,
             organization_id=org_id,
             owner_id=None,
-            created_at=None,
-            updated_at=None,
+            created_at=created_at,
+            updated_at=updated_at,
             fingerprint=fingerprint,
             content_hash=content_hash,
-            properties=dict(component.metadata_properties or {}),
+            properties=props,
             relationships=deduped,
+            raw_source=dict(props),
             normalized_at=utc_now_str(),
         )
 
@@ -138,5 +180,10 @@ class CanonicalNormalizer(INormalizer):
                     rule=type(rule).__name__,
                     error=str(exc),
                 )
+
+        if doc.created_at is None:
+            doc.created_at = created_at
+        if doc.updated_at is None:
+            doc.updated_at = updated_at
 
         return doc

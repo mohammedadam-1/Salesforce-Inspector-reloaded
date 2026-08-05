@@ -13,6 +13,9 @@ from sfir_backend.application.pipeline.normalizer.rules.normalize_nulls_rule imp
 from sfir_backend.application.pipeline.normalizer.rules.normalize_owner_rule import (
     NormalizeOwnerRule,
 )
+from sfir_backend.application.pipeline.normalizer.rules.normalize_parent_rule import (
+    NormalizeParentRule,
+)
 from sfir_backend.application.pipeline.normalizer.rules.normalize_strings_rule import (
     NormalizeStringsRule,
 )
@@ -29,6 +32,7 @@ __all__ = [
     "NormalizeNamesRule",
     "NormalizeNullsRule",
     "NormalizeOwnerRule",
+    "NormalizeParentRule",
     "NormalizeStringsRule",
     "NormalizeTimestampsRule",
     "NormalizeTypeNameRule",

@@ -70,10 +70,22 @@ class NormalizedRelationship(BaseModel):
 
 
 class NormalizedDocument(BaseModel):
+    """Canonical common model for every Salesforce metadata type.
+
+    Every component — object, field, flow, apex, validation rule, profile,
+    permission set, layout, record type, custom metadata, global value set,
+    trigger, relationship — is normalized into this single surface:
+    stable id, metadata type, developer name, api name, namespace, parent,
+    children, references, created/modified dates, version, deleted flag and
+    raw source. This is the ONLY representation downstream consumers
+    (graph, search, embeddings, planner, AI) may read.
+    """
+
     identity: str
     component_key: ComponentKey | None = None
     type: str
     api_name: str
+    developer_name: str = ""
     qualified_name: str
     fully_qualified_name: str
     label: str | None = None
@@ -81,16 +93,41 @@ class NormalizedDocument(BaseModel):
     description: str | None = None
     version: int = 1
     status: str = "active"
+    deleted: bool = False
     source_platform: str = "salesforce"
     organization_id: str
     owner_id: str | None = None
+    parent_identity: str | None = None
+    parent_key: ComponentKey | None = None
+    children_identities: list[str] = Field(default_factory=list)
     created_at: str | None = None
     updated_at: str | None = None
     fingerprint: str
     content_hash: str
     properties: dict[str, Any] = Field(default_factory=dict)
     relationships: list[NormalizedRelationship] = Field(default_factory=list)
+    raw_source: dict[str, Any] = Field(default_factory=dict)
     normalized_at: str = ""
+
+
+def coerce_iso_datetime(value: Any) -> str | None:
+    """Normalize a Salesforce/datetime value into an ISO-8601 UTC string."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc).isoformat()
+    if isinstance(value, str) and value.strip():
+        text = value.strip()
+        try:
+            dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return text
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc).isoformat()
+    return None
 
 
 class NormalizationReport(BaseModel):

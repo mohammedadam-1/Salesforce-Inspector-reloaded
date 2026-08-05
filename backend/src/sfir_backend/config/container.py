@@ -50,6 +50,7 @@ from sfir_backend.application.pipeline.normalizer.rules import (
     NormalizeNamesRule,
     NormalizeNullsRule,
     NormalizeOwnerRule,
+    NormalizeParentRule,
     NormalizeStringsRule,
     NormalizeTimestampsRule,
     NormalizeTypeNameRule,
@@ -832,6 +833,7 @@ class Container:
         normalizer.register(NormalizeEnumRule())
         normalizer.register(NormalizeOwnerRule())
         normalizer.register(NormalizeTimestampsRule())
+        normalizer.register(NormalizeParentRule())
         return normalizer
 
     def _make_parser_registry(self) -> ParserRegistry:
