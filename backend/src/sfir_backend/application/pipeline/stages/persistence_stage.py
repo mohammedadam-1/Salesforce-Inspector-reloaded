@@ -12,7 +12,11 @@ from sfir_backend.domain.canonical.base import (
     MetadataStatus,
     SourcePlatform,
 )
+from sfir_backend.domain.entities.canonical_document import CanonicalDocument
 from sfir_backend.domain.entities.metadata_sync import MetadataVersion
+from sfir_backend.domain.repositories.canonical_repo import (
+    ICanonicalDocumentRepository,
+)
 from sfir_backend.domain.repositories.metadata_repo import IMetadataRepository
 from sfir_backend.domain.value_objects.metadata import MetadataAction
 
@@ -58,11 +62,19 @@ class PersistenceStage(PipelineStage):
 
     Uses IMetadataRepository as the ONLY metadata persistence interface:
     changed components go through ``save_batch`` and their history through
-    ``save_versions``.
+    ``save_versions``. When a canonical repository is provided, the same
+    changed components are upserted into the canonical store (current-state
+    rows keyed by stable identity); unchanged fingerprints are skipped and
+    no second version source is created.
     """
 
-    def __init__(self, metadata_repo: IMetadataRepository) -> None:
+    def __init__(
+        self,
+        metadata_repo: IMetadataRepository,
+        canonical_repo: ICanonicalDocumentRepository | None = None,
+    ) -> None:
         self._metadata_repo = metadata_repo
+        self._canonical_repo = canonical_repo
 
     @property
     def name(self) -> str:
@@ -94,6 +106,7 @@ class PersistenceStage(PipelineStage):
 
         saved: list[MetadataVersion] = []
         components_to_persist: list[MetadataComponent] = []
+        changed_documents: list[tuple[dict[str, Any], int, int]] = []
         errors: list[str] = []
         skipped_count = 0
         batch_seen: set[tuple[str, str]] = set()
@@ -138,6 +151,10 @@ class PersistenceStage(PipelineStage):
                 else:
                     components_to_persist.append(component)
 
+                changed_documents.append(
+                    (payload, new_version, existing_version),
+                )
+
                 version = MetadataVersion.create(
                     organization_id=context.organization_id,
                     sync_job_id=context.sync_job_id,
@@ -161,6 +178,7 @@ class PersistenceStage(PipelineStage):
 
         persisted_components: list[MetadataComponent] = []
         persisted: list[MetadataVersion] = []
+        canonical_result = None
         try:
             if components_to_persist:
                 persisted_components = await self._metadata_repo.save_batch(
@@ -171,6 +189,27 @@ class PersistenceStage(PipelineStage):
                 persisted = await self._metadata_repo.save_versions(
                     context.organization_id,
                     saved,
+                )
+            if self._canonical_repo is not None and changed_documents:
+                documents = [
+                    CanonicalDocument.create(
+                        organization_id=context.organization_id,
+                        identity=payload.get("identity", "") or payload.get("api_name", ""),
+                        type=payload.get("type", ""),
+                        api_name=payload.get("api_name", ""),
+                        developer_name=payload.get("developer_name", ""),
+                        namespace=payload.get("namespace"),
+                        version=new_version,
+                        previous_version=previous_version,
+                        fingerprint=payload.get("fingerprint", ""),
+                        sync_job_id=context.sync_job_id,
+                        payload=payload,
+                    )
+                    for payload, new_version, previous_version in changed_documents
+                ]
+                canonical_result = await self._canonical_repo.upsert_batch(
+                    context.organization_id,
+                    documents,
                 )
         except Exception as exc:
             msg = f"Failed to persist {len(saved)} versions / {len(components_to_persist)} components: {exc}"
@@ -184,6 +223,13 @@ class PersistenceStage(PipelineStage):
             "skipped": skipped_count,
             "errors": len(errors),
         }
+        if canonical_result is not None:
+            context.persistence_result["canonical"] = {
+                "created": canonical_result.created,
+                "updated": canonical_result.updated,
+                "skipped": canonical_result.skipped,
+                "soft_deleted": canonical_result.soft_deleted,
+            }
 
         logger.info(
             "persistence_stage_complete",
@@ -193,5 +239,7 @@ class PersistenceStage(PipelineStage):
             skipped=skipped_count,
             errors=len(errors),
             existing_versions=len(existing_versions),
+            canonical_created=canonical_result.created if canonical_result else 0,
+            canonical_updated=canonical_result.updated if canonical_result else 0,
         )
         return context

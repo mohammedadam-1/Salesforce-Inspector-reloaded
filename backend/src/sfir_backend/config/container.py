@@ -157,6 +157,9 @@ from sfir_backend.infrastructure.observability.tracing import TracingManager
 from sfir_backend.infrastructure.persistence.repositories.audit_log_repo import (
     AuditLogRepository,
 )
+from sfir_backend.infrastructure.persistence.repositories.canonical_repo import (
+    SQLAlchemyCanonicalDocumentRepository,
+)
 from sfir_backend.infrastructure.persistence.repositories.metadata_repo import (
     SQLAlchemyMetadataRepository,
 )
@@ -261,6 +264,7 @@ def _make_repos_from_session(session: AsyncSession) -> dict[str, Any]:
         "sync_statistics": SyncStatisticsRepository(session),
         "sync_checkpoint": SyncCheckpointRepository(session),
         "metadata": SQLAlchemyMetadataRepository(session),
+        "canonical_document": SQLAlchemyCanonicalDocumentRepository(session),
     }
 
 
@@ -562,6 +566,7 @@ class Container:
             "sync_statistics": SyncStatisticsRepository(session),
             "sync_checkpoint": SyncCheckpointRepository(session),
             "metadata": SQLAlchemyMetadataRepository(session),
+            "canonical_document": SQLAlchemyCanonicalDocumentRepository(session),
         }
 
     def _make_oauth_session_repo(self) -> RedisOAuthSessionRepository | None:
@@ -693,6 +698,7 @@ class Container:
             oauth_service=self._services["oauth"],
             metadata_pipeline=self._make_metadata_pipeline(),
             checkpoint_repo=repos["sync_checkpoint"],
+            canonical_repo=repos["canonical_document"],
         )
 
     def create_sync_coordinator(self, session: AsyncSession) -> SyncCoordinator:
@@ -723,6 +729,7 @@ class Container:
             oauth_service=self._services["oauth"],
             metadata_pipeline=self.create_metadata_pipeline(session),
             checkpoint_repo=repos["sync_checkpoint"],
+            canonical_repo=repos["canonical_document"],
         )
 
     def _make_metadata_pipeline(self) -> MetadataPipeline:
@@ -740,7 +747,10 @@ class Container:
             CanonicalMappingStage(mapper=mapper),
             ValidationStage(validator=validator),
             NormalizationStage(normalizer=normalizer),
-            PersistenceStage(metadata_repo=metadata_repo),
+            PersistenceStage(
+                metadata_repo=metadata_repo,
+                canonical_repo=repos["canonical_document"],
+            ),
             GraphStage(graph_engine=graph_engine),
             SearchStage(search_engine=search_engine),
         ]
@@ -761,7 +771,10 @@ class Container:
             CanonicalMappingStage(mapper=mapper),
             ValidationStage(validator=validator),
             NormalizationStage(normalizer=normalizer),
-            PersistenceStage(metadata_repo=metadata_repo),
+            PersistenceStage(
+                metadata_repo=metadata_repo,
+                canonical_repo=repos["canonical_document"],
+            ),
             GraphStage(graph_engine=graph_engine),
             SearchStage(search_engine=search_engine),
         ]
