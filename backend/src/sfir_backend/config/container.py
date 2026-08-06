@@ -55,12 +55,16 @@ from sfir_backend.application.pipeline.normalizer.rules import (
     NormalizeTimestampsRule,
     NormalizeTypeNameRule,
 )
+from sfir_backend.application.pipeline.resolver.canonical_relationship_resolver import (
+    CanonicalRelationshipResolver,
+)
 from sfir_backend.application.pipeline.stages import (
     CanonicalMappingStage,
     GraphStage,
     NormalizationStage,
     ParserStage,
     PersistenceStage,
+    RelationshipStage,
     SearchStage,
     ValidationStage,
 )
@@ -159,6 +163,9 @@ from sfir_backend.infrastructure.persistence.repositories.audit_log_repo import 
 )
 from sfir_backend.infrastructure.persistence.repositories.canonical_repo import (
     SQLAlchemyCanonicalDocumentRepository,
+)
+from sfir_backend.infrastructure.persistence.repositories.canonical_relationship_repo import (
+    SQLAlchemyCanonicalRelationshipRepository,
 )
 from sfir_backend.infrastructure.persistence.repositories.metadata_repo import (
     SQLAlchemyMetadataRepository,
@@ -265,6 +272,7 @@ def _make_repos_from_session(session: AsyncSession) -> dict[str, Any]:
         "sync_checkpoint": SyncCheckpointRepository(session),
         "metadata": SQLAlchemyMetadataRepository(session),
         "canonical_document": SQLAlchemyCanonicalDocumentRepository(session),
+        "canonical_relationship": SQLAlchemyCanonicalRelationshipRepository(session),
     }
 
 
@@ -567,6 +575,7 @@ class Container:
             "sync_checkpoint": SyncCheckpointRepository(session),
             "metadata": SQLAlchemyMetadataRepository(session),
             "canonical_document": SQLAlchemyCanonicalDocumentRepository(session),
+            "canonical_relationship": SQLAlchemyCanonicalRelationshipRepository(session),
         }
 
     def _make_oauth_session_repo(self) -> RedisOAuthSessionRepository | None:
@@ -699,6 +708,7 @@ class Container:
             metadata_pipeline=self._make_metadata_pipeline(),
             checkpoint_repo=repos["sync_checkpoint"],
             canonical_repo=repos["canonical_document"],
+            canonical_relationship_repo=repos["canonical_relationship"],
         )
 
     def create_sync_coordinator(self, session: AsyncSession) -> SyncCoordinator:
@@ -730,6 +740,7 @@ class Container:
             metadata_pipeline=self.create_metadata_pipeline(session),
             checkpoint_repo=repos["sync_checkpoint"],
             canonical_repo=repos["canonical_document"],
+            canonical_relationship_repo=repos["canonical_relationship"],
         )
 
     def _make_metadata_pipeline(self) -> MetadataPipeline:
@@ -750,6 +761,11 @@ class Container:
             PersistenceStage(
                 metadata_repo=metadata_repo,
                 canonical_repo=repos["canonical_document"],
+            ),
+            RelationshipStage(
+                relationship_repo=repos["canonical_relationship"],
+                canonical_repo=repos["canonical_document"],
+                resolver=self._make_canonical_relationship_resolver(),
             ),
             GraphStage(graph_engine=graph_engine),
             SearchStage(search_engine=search_engine),
@@ -774,6 +790,11 @@ class Container:
             PersistenceStage(
                 metadata_repo=metadata_repo,
                 canonical_repo=repos["canonical_document"],
+            ),
+            RelationshipStage(
+                relationship_repo=repos["canonical_relationship"],
+                canonical_repo=repos["canonical_document"],
+                resolver=self._make_canonical_relationship_resolver(),
             ),
             GraphStage(graph_engine=graph_engine),
             SearchStage(search_engine=search_engine),
@@ -835,6 +856,9 @@ class Container:
         validator.register(EmptyRequiredFieldRule())
         validator.register(VersionRangeRule())
         return validator
+
+    def _make_canonical_relationship_resolver(self) -> CanonicalRelationshipResolver:
+        return CanonicalRelationshipResolver()
 
     def _make_canonical_normalizer(self) -> CanonicalNormalizer:
         normalizer = CanonicalNormalizer()

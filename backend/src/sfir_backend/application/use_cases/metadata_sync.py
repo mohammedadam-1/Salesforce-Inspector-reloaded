@@ -22,6 +22,9 @@ from sfir_backend.domain.entities.metadata_sync import (
     SyncStatistics,
 )
 from sfir_backend.domain.repositories.audit_log_repo import IAuditLogRepository
+from sfir_backend.domain.repositories.canonical_relationship_repo import (
+    ICanonicalRelationshipRepository,
+)
 from sfir_backend.domain.repositories.canonical_repo import (
     ICanonicalDocumentRepository,
 )
@@ -105,6 +108,7 @@ class SyncCoordinator:
         checkpoint_repo: ISyncCheckpointRepository | None = None,
         retriever: MetadataBatchRetriever | None = None,
         canonical_repo: ICanonicalDocumentRepository | None = None,
+        canonical_relationship_repo: ICanonicalRelationshipRepository | None = None,
     ) -> None:
         self._connection_repo = connection_repo
         self._sync_job_repo = sync_job_repo
@@ -125,6 +129,7 @@ class SyncCoordinator:
         self._checkpoint_repo = checkpoint_repo
         self._retriever = retriever or MetadataBatchRetriever(download_manager)
         self._canonical_repo = canonical_repo
+        self._canonical_relationship_repo = canonical_relationship_repo
 
     def _lock_key(self, org_id: uuid.UUID, conn_id: uuid.UUID) -> str:
         return f"sync_lock:{org_id}:{conn_id}"
@@ -595,6 +600,33 @@ class SyncCoordinator:
             except Exception as exc:
                 logger.warning(
                     "canonical_soft_delete_failed",
+                    metadata_type=metadata_type,
+                    error=str(exc),
+                )
+
+        if (
+            self._canonical_relationship_repo is not None
+            and self._canonical_repo is not None
+            and fetched_names
+        ):
+            try:
+                docs = await self._canonical_repo.list_latest_by_type(
+                    job.organization_id, metadata_type,
+                )
+                deleted_identities = {
+                    doc.identity
+                    for doc in docs
+                    if not doc.is_deleted and doc.api_name not in fetched_names
+                }
+                if deleted_identities:
+                    await self._canonical_relationship_repo.soft_delete_by_source_identities(
+                        job.organization_id,
+                        deleted_identities,
+                        sync_job_id=job.id,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "canonical_relationship_soft_delete_failed",
                     metadata_type=metadata_type,
                     error=str(exc),
                 )

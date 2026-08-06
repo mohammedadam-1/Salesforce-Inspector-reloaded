@@ -2,6 +2,9 @@ from sfir_backend.infrastructure.persistence.models.audit_log import AuditLogMod
 from sfir_backend.infrastructure.persistence.models.canonical_document import (
     CanonicalDocumentModel,
 )
+from sfir_backend.infrastructure.persistence.models.canonical_relationship import (
+    CanonicalRelationshipModel,
+)
 from sfir_backend.infrastructure.persistence.models.metadata_sync import (
     MetadataVersionModel,
     SyncHistoryModel,
@@ -23,6 +26,7 @@ from sfir_backend.infrastructure.persistence.models.user import UserModel
 __all__ = [
     "AuditLogModel",
     "CanonicalDocumentModel",
+    "CanonicalRelationshipModel",
     "MetadataVersionModel",
     "OrgMemberModel",
     "OrganizationModel",

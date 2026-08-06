@@ -39,6 +39,17 @@ class PipelineContext:
 
     normalized_relationships: list = field(default_factory=list)
 
+    relationship_result: dict = field(
+        default_factory=lambda: {
+            "resolved": 0,
+            "persisted": 0,
+            "skipped": 0,
+            "soft_deleted": 0,
+            "missing_references": 0,
+            "errors": 0,
+        },
+    )
+
     graph_result: dict = field(default_factory=dict)
     graph_statistics: dict = field(default_factory=dict)
     graph_version: str = ""
