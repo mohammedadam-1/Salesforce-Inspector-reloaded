@@ -50,6 +50,27 @@ class PipelineContext:
         },
     )
 
+    dependency_graph_result: dict = field(
+        default_factory=lambda: {
+            "nodes": {
+                "created": 0,
+                "updated": 0,
+                "skipped": 0,
+                "deleted": 0,
+                "endpoint_nodes_created": 0,
+            },
+            "edges": {
+                "created": 0,
+                "updated": 0,
+                "skipped": 0,
+                "deleted": 0,
+            },
+            "stale_edges_deleted": 0,
+            "node_edge_deletions": 0,
+            "errors": [],
+        },
+    )
+
     graph_result: dict = field(default_factory=dict)
     graph_statistics: dict = field(default_factory=dict)
     graph_version: str = ""

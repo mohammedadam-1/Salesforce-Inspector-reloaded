@@ -60,6 +60,7 @@ from sfir_backend.application.pipeline.resolver.canonical_relationship_resolver 
 )
 from sfir_backend.application.pipeline.stages import (
     CanonicalMappingStage,
+    DependencyGraphStage,
     GraphStage,
     NormalizationStage,
     ParserStage,
@@ -167,6 +168,9 @@ from sfir_backend.infrastructure.persistence.repositories.canonical_repo import 
 from sfir_backend.infrastructure.persistence.repositories.canonical_relationship_repo import (
     SQLAlchemyCanonicalRelationshipRepository,
 )
+from sfir_backend.infrastructure.persistence.repositories.graph_repo import (
+    SQLAlchemyGraphRepository,
+)
 from sfir_backend.infrastructure.persistence.repositories.metadata_repo import (
     SQLAlchemyMetadataRepository,
 )
@@ -273,6 +277,7 @@ def _make_repos_from_session(session: AsyncSession) -> dict[str, Any]:
         "metadata": SQLAlchemyMetadataRepository(session),
         "canonical_document": SQLAlchemyCanonicalDocumentRepository(session),
         "canonical_relationship": SQLAlchemyCanonicalRelationshipRepository(session),
+        "graph": SQLAlchemyGraphRepository(session),
     }
 
 
@@ -576,6 +581,7 @@ class Container:
             "metadata": SQLAlchemyMetadataRepository(session),
             "canonical_document": SQLAlchemyCanonicalDocumentRepository(session),
             "canonical_relationship": SQLAlchemyCanonicalRelationshipRepository(session),
+            "graph": SQLAlchemyGraphRepository(session),
         }
 
     def _make_oauth_session_repo(self) -> RedisOAuthSessionRepository | None:
@@ -767,6 +773,11 @@ class Container:
                 canonical_repo=repos["canonical_document"],
                 resolver=self._make_canonical_relationship_resolver(),
             ),
+            DependencyGraphStage(
+                graph_repo=repos["graph"],
+                canonical_repo=repos["canonical_document"],
+                relationship_repo=repos["canonical_relationship"],
+            ),
             GraphStage(graph_engine=graph_engine),
             SearchStage(search_engine=search_engine),
         ]
@@ -795,6 +806,11 @@ class Container:
                 relationship_repo=repos["canonical_relationship"],
                 canonical_repo=repos["canonical_document"],
                 resolver=self._make_canonical_relationship_resolver(),
+            ),
+            DependencyGraphStage(
+                graph_repo=repos["graph"],
+                canonical_repo=repos["canonical_document"],
+                relationship_repo=repos["canonical_relationship"],
             ),
             GraphStage(graph_engine=graph_engine),
             SearchStage(search_engine=search_engine),

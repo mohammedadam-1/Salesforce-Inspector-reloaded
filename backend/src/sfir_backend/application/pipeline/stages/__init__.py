@@ -5,6 +5,7 @@ from sfir_backend.application.pipeline.stages.canonical_mapping_stage import Can
 from sfir_backend.application.pipeline.stages.normalization_stage import NormalizationStage
 from sfir_backend.application.pipeline.stages.persistence_stage import PersistenceStage
 from sfir_backend.application.pipeline.stages.relationship_stage import RelationshipStage
+from sfir_backend.application.pipeline.stages.dependency_graph_stage import DependencyGraphStage
 from sfir_backend.application.pipeline.stages.graph_stage import GraphStage
 from sfir_backend.application.pipeline.stages.search_stage import SearchStage
 
@@ -16,6 +17,7 @@ __all__ = [
     "NormalizationStage",
     "PersistenceStage",
     "RelationshipStage",
+    "DependencyGraphStage",
     "GraphStage",
     "SearchStage",
 ]

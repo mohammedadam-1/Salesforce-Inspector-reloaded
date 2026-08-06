@@ -5,6 +5,8 @@ from sfir_backend.infrastructure.persistence.models.canonical_document import (
 from sfir_backend.infrastructure.persistence.models.canonical_relationship import (
     CanonicalRelationshipModel,
 )
+from sfir_backend.infrastructure.persistence.models.graph_edge import GraphEdgeModel
+from sfir_backend.infrastructure.persistence.models.graph_node import GraphNodeModel
 from sfir_backend.infrastructure.persistence.models.metadata_sync import (
     MetadataVersionModel,
     SyncHistoryModel,
@@ -27,6 +29,8 @@ __all__ = [
     "AuditLogModel",
     "CanonicalDocumentModel",
     "CanonicalRelationshipModel",
+    "GraphEdgeModel",
+    "GraphNodeModel",
     "MetadataVersionModel",
     "OrgMemberModel",
     "OrganizationModel",
