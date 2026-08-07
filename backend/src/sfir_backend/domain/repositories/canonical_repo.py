@@ -41,6 +41,15 @@ class ICanonicalDocumentRepository(ABC):
         ...
 
     @abstractmethod
+    async def get_by_identities(
+        self,
+        organization_id: uuid.UUID,
+        identities: set[str],
+    ) -> list[CanonicalDocument]:
+        """Return current-state rows for a set of stable identities."""
+        ...
+
+    @abstractmethod
     async def list_latest(
         self,
         organization_id: uuid.UUID,

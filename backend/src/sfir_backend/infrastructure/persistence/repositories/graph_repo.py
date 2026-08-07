@@ -470,6 +470,32 @@ class SQLAlchemyGraphRepository(IGraphRepository):
         )
         return [_edge_to_entity(row) for row in result.scalars()]
 
+    async def list_active_edges_for_identities(
+        self,
+        organization_id: uuid.UUID,
+        identities: set[str],
+        *,
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> list[GraphEdge]:
+        if not identities:
+            return []
+        result = await self._session.execute(
+            select(GraphEdgeModel)
+            .where(
+                GraphEdgeModel.organization_id == organization_id,
+                GraphEdgeModel.deleted.is_(False),
+                or_(
+                    GraphEdgeModel.source_identity.in_(identities),
+                    GraphEdgeModel.target_identity.in_(identities),
+                ),
+            )
+            .order_by(GraphEdgeModel.source_api_name)
+            .limit(limit)
+            .offset(offset),
+        )
+        return [_edge_to_entity(row) for row in result.scalars()]
+
     async def count_nodes(
         self,
         organization_id: uuid.UUID,

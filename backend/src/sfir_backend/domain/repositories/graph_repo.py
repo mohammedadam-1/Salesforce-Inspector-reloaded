@@ -127,6 +127,18 @@ class IGraphRepository(ABC):
         ...
 
     @abstractmethod
+    async def list_active_edges_for_identities(
+        self,
+        organization_id: uuid.UUID,
+        identities: set[str],
+        *,
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> list[GraphEdge]:
+        """List active edges touching any of the identities (either direction)."""
+        ...
+
+    @abstractmethod
     async def count_nodes(
         self,
         organization_id: uuid.UUID,

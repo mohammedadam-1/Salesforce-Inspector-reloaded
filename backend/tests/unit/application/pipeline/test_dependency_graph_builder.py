@@ -142,7 +142,11 @@ class FakeGraphRepository(IGraphRepository):
         return result
 
     async def soft_delete_nodes(
-        self, org: uuid.UUID, identities: set[str], *, sync_job_id: uuid.UUID | None = None,
+        self,
+        org: uuid.UUID,
+        identities: set[str],
+        *,
+        sync_job_id: uuid.UUID | None = None,
     ) -> int:
         store = self.nodes.setdefault(org, {})
         count = 0
@@ -154,7 +158,11 @@ class FakeGraphRepository(IGraphRepository):
         return count
 
     async def soft_delete_edges_for_node(
-        self, org: uuid.UUID, identity: str, *, sync_job_id: uuid.UUID | None = None,
+        self,
+        org: uuid.UUID,
+        identity: str,
+        *,
+        sync_job_id: uuid.UUID | None = None,
     ) -> int:
         store = self.edges.setdefault(org, {})
         count = 0
@@ -187,7 +195,11 @@ class FakeGraphRepository(IGraphRepository):
         return count
 
     async def soft_delete_edges_for_sources(
-        self, org: uuid.UUID, source_identities: set[str], *, sync_job_id: uuid.UUID | None = None,
+        self,
+        org: uuid.UUID,
+        source_identities: set[str],
+        *,
+        sync_job_id: uuid.UUID | None = None,
     ) -> int:
         store = self.edges.setdefault(org, {})
         count = 0
@@ -201,13 +213,17 @@ class FakeGraphRepository(IGraphRepository):
         return self.nodes.setdefault(org, {}).get(identity)
 
     async def get_nodes_by_identities(
-        self, org: uuid.UUID, identities: set[str],
+        self,
+        org: uuid.UUID,
+        identities: set[str],
     ) -> list[GraphNode]:
         store = self.nodes.setdefault(org, {})
         return [store[i] for i in identities if i in store]
 
     async def get_edges_by_keys(
-        self, org: uuid.UUID, keys: set[tuple[str, str, str]],
+        self,
+        org: uuid.UUID,
+        keys: set[tuple[str, str, str]],
     ) -> list[GraphEdge]:
         store = self.edges.setdefault(org, {})
         return [store[k] for k in keys if k in store]
@@ -228,9 +244,30 @@ class FakeGraphRepository(IGraphRepository):
         return nodes[offset : offset + limit]
 
     async def list_active_edges(
-        self, org: uuid.UUID, *, limit: int = 1000, offset: int = 0,
+        self,
+        org: uuid.UUID,
+        *,
+        limit: int = 1000,
+        offset: int = 0,
     ) -> list[GraphEdge]:
         edges = [e for e in self.edges.setdefault(org, {}).values() if not e.is_deleted]
+        return edges[offset : offset + limit]
+
+    async def list_active_edges_for_identities(
+        self,
+        org: uuid.UUID,
+        identities: set[str],
+        *,
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> list[GraphEdge]:
+        store = self.edges.setdefault(org, {})
+        edges = [
+            e
+            for e in store.values()
+            if not e.is_deleted
+            and (e.source_identity in identities or e.target_identity in identities)
+        ]
         return edges[offset : offset + limit]
 
     async def count_nodes(self, org: uuid.UUID) -> int:

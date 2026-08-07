@@ -84,6 +84,7 @@ from sfir_backend.application.pipeline.validator.rules import (
     RoleCircularReferenceRule,
     VersionRangeRule,
 )
+from sfir_backend.application.retrieval import RetrievalEngine
 from sfir_backend.application.use_cases.ai.agent import (
     AgentService,
     AnalyzeDependenciesTool,
@@ -454,6 +455,7 @@ class Container:
         self._services["search_engine"] = SearchEngine()
         self._services["documentation_engine"] = DocumentationEngine()
         self._services["job_engine"] = JobEngine()
+        self._services["retrieval_engine"] = self._make_retrieval_engine()
 
         coordinator = self._ports["cache_coordinator"]
         key_builder = self._ports["key_builder"]
@@ -753,6 +755,14 @@ class Container:
             checkpoint_repo=repos["sync_checkpoint"],
             canonical_repo=repos["canonical_document"],
             canonical_relationship_repo=repos["canonical_relationship"],
+        )
+
+    def _make_retrieval_engine(self) -> RetrievalEngine:
+        repos = self._make_repos()
+        return RetrievalEngine(
+            search_repo=repos["search_index"],
+            canonical_repo=repos["canonical_document"],
+            graph_repo=repos["graph"],
         )
 
     def _make_metadata_pipeline(self) -> MetadataPipeline:

@@ -135,6 +135,20 @@ class SQLAlchemyCanonicalDocumentRepository(ICanonicalDocumentRepository):
         row = result.scalar_one_or_none()
         return _to_entity(row) if row else None
 
+    async def get_by_identities(
+        self,
+        organization_id: uuid.UUID,
+        identities: set[str],
+    ) -> list[CanonicalDocument]:
+        if not identities:
+            return []
+        result = await self._session.execute(
+            select(CanonicalDocumentModel)
+            .where(CanonicalDocumentModel.organization_id == organization_id)
+            .where(CanonicalDocumentModel.identity.in_(identities)),
+        )
+        return [_to_entity(row) for row in result.scalars()]
+
     async def list_latest(
         self,
         organization_id: uuid.UUID,
