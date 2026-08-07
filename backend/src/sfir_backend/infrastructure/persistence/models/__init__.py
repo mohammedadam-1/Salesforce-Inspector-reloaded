@@ -22,6 +22,9 @@ from sfir_backend.infrastructure.persistence.models.role import RoleModel
 from sfir_backend.infrastructure.persistence.models.salesforce_connection import (
     SalesforceConnectionModel,
 )
+from sfir_backend.infrastructure.persistence.models.search_document import (
+    SearchIndexDocumentModel,
+)
 from sfir_backend.infrastructure.persistence.models.session import SessionModel
 from sfir_backend.infrastructure.persistence.models.user import UserModel
 
@@ -38,6 +41,7 @@ __all__ = [
     "RefreshTokenModel",
     "RoleModel",
     "SalesforceConnectionModel",
+    "SearchIndexDocumentModel",
     "SessionModel",
     "SyncHistoryModel",
     "SyncJobModel",

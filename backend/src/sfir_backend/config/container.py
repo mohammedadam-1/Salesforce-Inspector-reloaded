@@ -66,6 +66,7 @@ from sfir_backend.application.pipeline.stages import (
     ParserStage,
     PersistenceStage,
     RelationshipStage,
+    SearchIndexStage,
     SearchStage,
     ValidationStage,
 )
@@ -170,6 +171,9 @@ from sfir_backend.infrastructure.persistence.repositories.canonical_relationship
 )
 from sfir_backend.infrastructure.persistence.repositories.graph_repo import (
     SQLAlchemyGraphRepository,
+)
+from sfir_backend.infrastructure.persistence.repositories.search_index_repo import (
+    SQLAlchemySearchIndexRepository,
 )
 from sfir_backend.infrastructure.persistence.repositories.metadata_repo import (
     SQLAlchemyMetadataRepository,
@@ -278,6 +282,7 @@ def _make_repos_from_session(session: AsyncSession) -> dict[str, Any]:
         "canonical_document": SQLAlchemyCanonicalDocumentRepository(session),
         "canonical_relationship": SQLAlchemyCanonicalRelationshipRepository(session),
         "graph": SQLAlchemyGraphRepository(session),
+        "search_index": SQLAlchemySearchIndexRepository(session),
     }
 
 
@@ -582,6 +587,7 @@ class Container:
             "canonical_document": SQLAlchemyCanonicalDocumentRepository(session),
             "canonical_relationship": SQLAlchemyCanonicalRelationshipRepository(session),
             "graph": SQLAlchemyGraphRepository(session),
+            "search_index": SQLAlchemySearchIndexRepository(session),
         }
 
     def _make_oauth_session_repo(self) -> RedisOAuthSessionRepository | None:
@@ -778,6 +784,11 @@ class Container:
                 canonical_repo=repos["canonical_document"],
                 relationship_repo=repos["canonical_relationship"],
             ),
+            SearchIndexStage(
+                search_repo=repos["search_index"],
+                canonical_repo=repos["canonical_document"],
+                graph_repo=repos["graph"],
+            ),
             GraphStage(graph_engine=graph_engine),
             SearchStage(search_engine=search_engine),
         ]
@@ -811,6 +822,11 @@ class Container:
                 graph_repo=repos["graph"],
                 canonical_repo=repos["canonical_document"],
                 relationship_repo=repos["canonical_relationship"],
+            ),
+            SearchIndexStage(
+                search_repo=repos["search_index"],
+                canonical_repo=repos["canonical_document"],
+                graph_repo=repos["graph"],
             ),
             GraphStage(graph_engine=graph_engine),
             SearchStage(search_engine=search_engine),

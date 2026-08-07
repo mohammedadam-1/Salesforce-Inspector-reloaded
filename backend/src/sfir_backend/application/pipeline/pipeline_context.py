@@ -71,6 +71,17 @@ class PipelineContext:
         },
     )
 
+    search_index_result: dict = field(
+        default_factory=lambda: {
+            "created": 0,
+            "updated": 0,
+            "skipped": 0,
+            "soft_deleted": 0,
+            "stale_deleted": 0,
+            "errors": [],
+        },
+    )
+
     graph_result: dict = field(default_factory=dict)
     graph_statistics: dict = field(default_factory=dict)
     graph_version: str = ""

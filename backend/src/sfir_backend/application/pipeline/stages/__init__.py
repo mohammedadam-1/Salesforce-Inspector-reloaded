@@ -6,6 +6,7 @@ from sfir_backend.application.pipeline.stages.normalization_stage import Normali
 from sfir_backend.application.pipeline.stages.persistence_stage import PersistenceStage
 from sfir_backend.application.pipeline.stages.relationship_stage import RelationshipStage
 from sfir_backend.application.pipeline.stages.dependency_graph_stage import DependencyGraphStage
+from sfir_backend.application.pipeline.stages.search_index_stage import SearchIndexStage
 from sfir_backend.application.pipeline.stages.graph_stage import GraphStage
 from sfir_backend.application.pipeline.stages.search_stage import SearchStage
 
@@ -18,6 +19,7 @@ __all__ = [
     "PersistenceStage",
     "RelationshipStage",
     "DependencyGraphStage",
+    "SearchIndexStage",
     "GraphStage",
     "SearchStage",
 ]
