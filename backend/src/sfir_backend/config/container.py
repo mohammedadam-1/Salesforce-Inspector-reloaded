@@ -86,6 +86,7 @@ from sfir_backend.application.pipeline.validator.rules import (
 )
 from sfir_backend.application.planner import Planner
 from sfir_backend.application.retrieval import RetrievalEngine
+from sfir_backend.application.specification import ResponseSpecificationBuilder
 from sfir_backend.application.validator import CitationValidator
 from sfir_backend.application.use_cases.ai.agent import (
     AgentService,
@@ -460,6 +461,9 @@ class Container:
         self._services["retrieval_engine"] = self._make_retrieval_engine()
         self._services["planner"] = self._make_planner()
         self._services["citation_validator"] = self._make_citation_validator()
+        self._services["response_specification_builder"] = (
+            self._make_response_specification_builder()
+        )
 
         coordinator = self._ports["cache_coordinator"]
         key_builder = self._ports["key_builder"]
@@ -774,6 +778,9 @@ class Container:
 
     def _make_citation_validator(self) -> CitationValidator:
         return CitationValidator()
+
+    def _make_response_specification_builder(self) -> ResponseSpecificationBuilder:
+        return ResponseSpecificationBuilder()
 
     def _make_metadata_pipeline(self) -> MetadataPipeline:
         repos = self._make_repos()
