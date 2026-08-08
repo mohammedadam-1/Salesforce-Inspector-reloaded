@@ -85,6 +85,7 @@ from sfir_backend.application.pipeline.validator.rules import (
     VersionRangeRule,
 )
 from sfir_backend.application.planner import Planner
+from sfir_backend.application.prompt_builder import PromptBuilder as PipelinePromptBuilder
 from sfir_backend.application.retrieval import RetrievalEngine
 from sfir_backend.application.specification import ResponseSpecificationBuilder
 from sfir_backend.application.validator import CitationValidator
@@ -464,6 +465,7 @@ class Container:
         self._services["response_specification_builder"] = (
             self._make_response_specification_builder()
         )
+        self._services["prompt_builder"] = self._make_prompt_builder()
 
         coordinator = self._ports["cache_coordinator"]
         key_builder = self._ports["key_builder"]
@@ -781,6 +783,9 @@ class Container:
 
     def _make_response_specification_builder(self) -> ResponseSpecificationBuilder:
         return ResponseSpecificationBuilder()
+
+    def _make_prompt_builder(self) -> PipelinePromptBuilder:
+        return PipelinePromptBuilder()
 
     def _make_metadata_pipeline(self) -> MetadataPipeline:
         repos = self._make_repos()
